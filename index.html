@@ -79,6 +79,7 @@
               <button id="playPause" class="toolbar-button" type="button" title="Play or pause">Play</button>
               <button id="muteToggle" class="toolbar-button" type="button" title="Mute or unmute">Mute</button>
               <button id="fullscreenButton" class="toolbar-button" type="button" title="Fullscreen">Full</button>
+              <button id="speedButton" class="toolbar-button" type="button" title="Preview speed">1x</button>
             </div>
             <div class="action-group">
               <button id="liveStartRecording" class="primary-button compact-button" type="button">Start Recording</button>
@@ -105,7 +106,10 @@
             <section class="recordings-panel" aria-label="Recorded clips">
               <div class="recordings-header">
                 <h3>Recorded Clips</h3>
-                <button id="refreshRecordings" class="secondary-button" type="button">Refresh</button>
+                <div class="action-group">
+                  <button id="backToLive" class="secondary-button compact-button" type="button">Back to Live</button>
+                  <button id="refreshRecordings" class="secondary-button compact-button" type="button">Refresh</button>
+                </div>
               </div>
               <div id="recordingsList" class="recordings-list"></div>
             </section>

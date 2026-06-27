@@ -11,6 +11,7 @@ const clock = document.querySelector("#clock");
 const playPause = document.querySelector("#playPause");
 const muteToggle = document.querySelector("#muteToggle");
 const fullscreenButton = document.querySelector("#fullscreenButton");
+const speedButton = document.querySelector("#speedButton");
 const qualityButtons = document.querySelectorAll(".quality-button");
 const navButtons = document.querySelectorAll("[data-view-target]");
 const viewPanels = document.querySelectorAll(".view-panel");
@@ -22,6 +23,7 @@ const liveStartRecording = document.querySelector("#liveStartRecording");
 const liveStopRecording = document.querySelector("#liveStopRecording");
 const openRecordings = document.querySelector("#openRecordings");
 const refreshRecordings = document.querySelector("#refreshRecordings");
+const backToLive = document.querySelector("#backToLive");
 const recordingsList = document.querySelector("#recordingsList");
 const recordingPlayer = document.querySelector("#recordingPlayer");
 const recordingEmptyState = document.querySelector("#recordingEmptyState");
@@ -32,7 +34,26 @@ let hlsPlayer = null;
 let demoStream = null;
 let demoAnimation = null;
 let activeView = "liveView";
+const previewSpeeds = [1, 1.25, 1.5, 2];
+let previewSpeedIndex = 0;
 
+
+function applyPreviewSpeed() {
+  const speed = previewSpeeds[previewSpeedIndex];
+  speedButton.textContent = `${speed}x`;
+  speedButton.title = `Preview speed ${speed}x`;
+
+  if (!video.hidden) {
+    video.playbackRate = speed;
+  } else {
+    frame.contentWindow?.postMessage({ action: "set-speed", speed }, "*");
+  }
+}
+
+function cyclePreviewSpeed() {
+  previewSpeedIndex = (previewSpeedIndex + 1) % previewSpeeds.length;
+  applyPreviewSpeed();
+}
 function setStatus(state, text) {
   connectionDot.classList.toggle("is-live", state === "live");
   connectionDot.classList.toggle("is-error", state === "error");
@@ -112,6 +133,7 @@ function loadHls(url) {
   if (video.canPlayType("application/vnd.apple.mpegurl")) {
     video.src = url;
     video.load();
+    applyPreviewSpeed();
     playVideoWhenReady();
     return;
   }
@@ -123,7 +145,10 @@ function loadHls(url) {
     });
     hlsPlayer.loadSource(url);
     hlsPlayer.attachMedia(video);
-    hlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, playVideoWhenReady);
+    hlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, () => {
+      applyPreviewSpeed();
+      playVideoWhenReady();
+    });
     hlsPlayer.on(window.Hls.Events.ERROR, () => {
       setStatus("error", "HLS stream unavailable");
     });
@@ -138,6 +163,7 @@ function loadDirectVideo(url) {
   video.hidden = false;
   frame.hidden = true;
   video.load();
+  applyPreviewSpeed();
   setStatus("waiting", "Connecting");
   playVideoWhenReady();
 }
@@ -194,6 +220,7 @@ function loadDemoPreview() {
   demoStream = canvas.captureStream(30);
   video.srcObject = demoStream;
   video.hidden = false;
+  applyPreviewSpeed();
   frame.hidden = true;
   showEmptyState(false);
   setStatus("live", "Demo preview");
@@ -366,6 +393,7 @@ async function refreshRecordingsList() {
 }
 
 function showView(targetId) {
+  activeView = targetId;
   navButtons.forEach((button) => {
     button.classList.toggle("is-active", button.dataset.viewTarget === targetId);
   });
@@ -386,6 +414,7 @@ stopRecording.addEventListener("click", stopRecorder);
 liveStartRecording.addEventListener("click", startRecorder);
 liveStopRecording.addEventListener("click", stopRecorder);
 openRecordings.addEventListener("click", () => showView("recordingsView"));
+backToLive.addEventListener("click", () => showView("liveView"));
 refreshRecordings.addEventListener("click", refreshRecordingsList);
 
 navButtons.forEach((button) => {
@@ -451,6 +480,8 @@ muteToggle.addEventListener("click", () => {
   video.muted = !video.muted;
   muteToggle.textContent = video.muted ? "Mute" : "Sound";
 });
+
+speedButton.addEventListener("click", cyclePreviewSpeed);
 
 fullscreenButton.addEventListener("click", () => {
   const target = document.querySelector(".video-stage");

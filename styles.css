@@ -462,6 +462,11 @@ iframe {
     justify-content: flex-start;
   }
 
+  .action-group {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
   .quality-toggle {
     width: 100%;
   }
