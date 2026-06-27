@@ -42,12 +42,13 @@
         </section>
 
         <section class="camera-panel" aria-labelledby="recordingControls">
-          <h2 id="recordingControls">Recording</h2>
+          <h2 id="recordingControls">Automatic Recording</h2>
           <p id="recordingStatus" class="hint">Checking recorder status</p>
-          <div class="recording-row">
-            <button id="startRecording" class="primary-button" type="button">Start</button>
-            <button id="stopRecording" class="secondary-button" type="button">Stop</button>
-          </div>
+          <label for="retentionDays">Keep recordings</label>
+          <select id="retentionDays" class="select-control">
+            <option value="1">1 day</option>
+            <option value="2">2 days</option>
+          </select>
         </section>
       </aside>
 
@@ -82,9 +83,7 @@
               <button id="speedButton" class="toolbar-button" type="button" title="Preview speed">1x</button>
             </div>
             <div class="action-group">
-              <button id="liveStartRecording" class="primary-button compact-button" type="button">Start Recording</button>
-              <button id="liveStopRecording" class="secondary-button compact-button" type="button">Stop</button>
-              <button id="openRecordings" class="secondary-button compact-button" type="button">Open Recordings</button>
+              <button id="openRecordings" class="primary-button compact-button" type="button">Open Recordings</button>
             </div>
             <div class="quality-toggle" role="group" aria-label="Preview quality">
               <button class="quality-button is-selected" type="button" data-quality="smooth">Smooth</button>

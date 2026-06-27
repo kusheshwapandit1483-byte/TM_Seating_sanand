@@ -1,6 +1,6 @@
 # TM Camera Monitor
 
-This is a lightweight Raspberry Pi camera monitor with live preview, recording controls, and browser playback for saved clips.
+This is a lightweight Raspberry Pi camera monitor with live preview, always-on recording, retention cleanup, and browser playback for saved clips.
 
 ## Run the app on Raspberry Pi
 
@@ -10,7 +10,7 @@ From this folder:
 python3 server.py
 ```
 
-Open the website through the server, not by opening `index.html` directly:
+Recording starts automatically when the server starts. Open the website through the server, not by opening `index.html` directly:
 
 ```text
 http://127.0.0.1:8080
@@ -44,7 +44,7 @@ http://127.0.0.1:8888/pramacam/index.m3u8
 
 ## Recording and playback
 
-The Python server records from this default source:
+The Python server records automatically from this default source:
 
 ```text
 rtsp://127.0.0.1:8554/pramacam
@@ -59,7 +59,7 @@ recordings/
 Use the website only:
 
 1. Open `http://RASPBERRY_PI_IP:8080`.
-2. Press `Start` in the Recording section.
+2. Recording starts automatically; no manual Start/Stop button is shown.
 3. Open the `Recordings` tab.
 4. Click a clip to play it in the webpage.
 
@@ -79,15 +79,16 @@ So a 64 GB high-endurance card can keep around 2 days, assuming the OS and free-
 
 ## Retention
 
-The server keeps the latest 2 days of MP4 recordings by default and deletes older MP4 clips from the recordings folder during normal use. Each clip is 30 minutes by default.
+Use the `Keep recordings` selector on the preview page. The allowed choices are:
 
-Change retention if needed:
-
-```bash
-RETENTION_DAYS=2 python3 server.py
+```text
+1 day
+2 days
 ```
 
-Optional full settings:
+The maximum is capped at 2 days. The server deletes older MP4 clips automatically during normal use.
+
+Optional startup settings:
 
 ```bash
 RECORDING_SOURCE="rtsp://127.0.0.1:8554/pramacam" SEGMENT_SECONDS=1800 RETENTION_DAYS=2 PORT=8080 python3 server.py

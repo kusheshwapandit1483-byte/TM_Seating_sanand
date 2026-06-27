@@ -17,10 +17,7 @@ const navButtons = document.querySelectorAll("[data-view-target]");
 const viewPanels = document.querySelectorAll(".view-panel");
 const pageTitle = document.querySelector("#pageTitle");
 const recordingStatus = document.querySelector("#recordingStatus");
-const startRecording = document.querySelector("#startRecording");
-const stopRecording = document.querySelector("#stopRecording");
-const liveStartRecording = document.querySelector("#liveStartRecording");
-const liveStopRecording = document.querySelector("#liveStopRecording");
+const retentionDays = document.querySelector("#retentionDays");
 const openRecordings = document.querySelector("#openRecordings");
 const refreshRecordings = document.querySelector("#refreshRecordings");
 const backToLive = document.querySelector("#backToLive");
@@ -327,51 +324,47 @@ function formatDate(value) {
   });
 }
 
-function updateRecorderButtons(running) {
-  startRecording.disabled = running;
-  stopRecording.disabled = !running;
-  liveStartRecording.disabled = running;
-  liveStopRecording.disabled = !running;
-}
-
 async function refreshRecordingStatus() {
   try {
     const status = await apiRequest("/api/recording/status");
     if (status.running) {
-      recordingStatus.textContent = `Recording active. Clips every ${formatDuration(status.segmentSeconds)}. Retention ${status.retentionDays} days.`;
+      recordingStatus.textContent = `Recording automatically. Clips every ${formatDuration(status.segmentSeconds)}. Retention ${status.retentionDays} day${status.retentionDays === 1 ? "" : "s"}.`;
     } else {
-      recordingStatus.textContent = `Recorder is stopped. Retention ${status.retentionDays} days.`;
+      recordingStatus.textContent = `Recorder is reconnecting automatically. Retention ${status.retentionDays} day${status.retentionDays === 1 ? "" : "s"}.`;
     }
-    updateRecorderButtons(status.running);
   } catch (error) {
-    recordingStatus.textContent = "Run python server.py to enable recording.";
-    updateRecorderButtons(false);
+    recordingStatus.textContent = "Run python server.py to enable automatic recording.";
   }
 }
 
-async function startRecorder() {
-  recordingStatus.textContent = "Starting recorder";
+
+
+async function loadSettings() {
   try {
-    const result = await apiRequest("/api/recording/start", { method: "POST" });
-    recordingStatus.textContent = result.message || "Recording started";
-    updateRecorderButtons(true);
+    const settings = await apiRequest("/api/settings");
+    retentionDays.value = String(settings.retentionDays || 2);
   } catch (error) {
-    recordingStatus.textContent = "Could not start recorder. Check ffmpeg and server logs.";
+    retentionDays.value = "2";
   }
 }
 
-async function stopRecorder() {
-  recordingStatus.textContent = "Stopping recorder";
+async function saveRetentionDays() {
+  const selectedDays = Math.min(2, Math.max(1, Number(retentionDays.value) || 2));
+  retentionDays.value = String(selectedDays);
   try {
-    const result = await apiRequest("/api/recording/stop", { method: "POST" });
-    recordingStatus.textContent = result.message || "Recording stopped";
-    updateRecorderButtons(false);
+    const result = await apiRequest("/api/settings", {
+      method: "POST",
+      body: JSON.stringify({ retentionDays: selectedDays }),
+    });
+    const status = result.status;
+    if (status) {
+      recordingStatus.textContent = `Recording automatically. Clips every ${formatDuration(status.segmentSeconds)}. Retention ${status.retentionDays} day${status.retentionDays === 1 ? "" : "s"}.`;
+    }
     await refreshRecordingsList();
   } catch (error) {
-    recordingStatus.textContent = "Could not stop recorder. Check server logs.";
+    recordingStatus.textContent = "Could not save retention setting. Check server connection.";
   }
 }
-
 function renderEmptyRecordings(message) {
   recordingsList.textContent = "";
   const empty = document.createElement("div");
@@ -386,7 +379,7 @@ async function refreshRecordingsList() {
     const recordings = data.recordings || [];
 
     if (!recordings.length) {
-      renderEmptyRecordings("No recordings yet. Start the recorder and wait for the first segment to finish.");
+      renderEmptyRecordings("No recordings yet. Automatic recording creates the first playable clip after the current segment finishes.");
       return;
     }
 
@@ -436,14 +429,11 @@ function showView(targetId) {
 
 loadButton.addEventListener("click", () => loadStream(streamInput.value));
 demoButton.addEventListener("click", loadDemoPreview);
-startRecording.addEventListener("click", startRecorder);
-stopRecording.addEventListener("click", stopRecorder);
-liveStartRecording.addEventListener("click", startRecorder);
-liveStopRecording.addEventListener("click", stopRecorder);
 openRecordings.addEventListener("click", () => showView("recordingsView"));
 backToLive.addEventListener("click", () => showView("liveView"));
 recordingSpeedButton.addEventListener("click", cycleRecordingSpeed);
 refreshRecordings.addEventListener("click", refreshRecordingsList);
+retentionDays.addEventListener("change", saveRetentionDays);
 
 navButtons.forEach((button) => {
   button.addEventListener("click", () => showView(button.dataset.viewTarget));
