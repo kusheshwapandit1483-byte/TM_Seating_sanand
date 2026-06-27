@@ -219,6 +219,12 @@ input:focus {
   justify-content: space-between;
   gap: 16px;
 }
+.action-group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 
 .eyebrow {
   margin-bottom: 4px;
@@ -320,6 +326,11 @@ iframe {
 .toolbar-button {
   min-width: 56px;
   padding: 0 10px;
+  font-size: 13px;
+}
+.compact-button {
+  min-width: 88px;
+  padding: 0 12px;
   font-size: 13px;
 }
 

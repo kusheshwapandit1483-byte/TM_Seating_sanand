@@ -18,6 +18,9 @@ const pageTitle = document.querySelector("#pageTitle");
 const recordingStatus = document.querySelector("#recordingStatus");
 const startRecording = document.querySelector("#startRecording");
 const stopRecording = document.querySelector("#stopRecording");
+const liveStartRecording = document.querySelector("#liveStartRecording");
+const liveStopRecording = document.querySelector("#liveStopRecording");
+const openRecordings = document.querySelector("#openRecordings");
 const refreshRecordings = document.querySelector("#refreshRecordings");
 const recordingsList = document.querySelector("#recordingsList");
 const recordingPlayer = document.querySelector("#recordingPlayer");
@@ -273,6 +276,8 @@ function formatDate(value) {
 function updateRecorderButtons(running) {
   startRecording.disabled = running;
   stopRecording.disabled = !running;
+  liveStartRecording.disabled = running;
+  liveStopRecording.disabled = !running;
 }
 
 async function refreshRecordingStatus() {
@@ -378,6 +383,9 @@ loadButton.addEventListener("click", () => loadStream(streamInput.value));
 demoButton.addEventListener("click", loadDemoPreview);
 startRecording.addEventListener("click", startRecorder);
 stopRecording.addEventListener("click", stopRecorder);
+liveStartRecording.addEventListener("click", startRecorder);
+liveStopRecording.addEventListener("click", stopRecorder);
+openRecordings.addEventListener("click", () => showView("recordingsView"));
 refreshRecordings.addEventListener("click", refreshRecordingsList);
 
 navButtons.forEach((button) => {

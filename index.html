@@ -75,9 +75,16 @@
           </section>
 
           <footer class="action-bar">
-            <button id="playPause" class="toolbar-button" type="button" title="Play or pause">Play</button>
-            <button id="muteToggle" class="toolbar-button" type="button" title="Mute or unmute">Mute</button>
-            <button id="fullscreenButton" class="toolbar-button" type="button" title="Fullscreen">Full</button>
+            <div class="action-group">
+              <button id="playPause" class="toolbar-button" type="button" title="Play or pause">Play</button>
+              <button id="muteToggle" class="toolbar-button" type="button" title="Mute or unmute">Mute</button>
+              <button id="fullscreenButton" class="toolbar-button" type="button" title="Fullscreen">Full</button>
+            </div>
+            <div class="action-group">
+              <button id="liveStartRecording" class="primary-button compact-button" type="button">Start Recording</button>
+              <button id="liveStopRecording" class="secondary-button compact-button" type="button">Stop</button>
+              <button id="openRecordings" class="secondary-button compact-button" type="button">Open Recordings</button>
+            </div>
             <div class="quality-toggle" role="group" aria-label="Preview quality">
               <button class="quality-button is-selected" type="button" data-quality="smooth">Smooth</button>
               <button class="quality-button" type="button" data-quality="clear">Clear</button>
