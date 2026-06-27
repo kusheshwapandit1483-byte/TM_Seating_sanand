@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlparse
 ROOT = Path(__file__).resolve().parent
 RECORDINGS_DIR = Path(os.environ.get("RECORDINGS_DIR", ROOT / "recordings")).resolve()
 RECORDING_SOURCE = os.environ.get("RECORDING_SOURCE", "rtsp://127.0.0.1:8554/pramacam")
-SEGMENT_SECONDS = int(os.environ.get("SEGMENT_SECONDS", "300"))
+SEGMENT_SECONDS = int(os.environ.get("SEGMENT_SECONDS", "1800"))
 RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "2"))
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 PORT = int(os.environ.get("PORT", "8080"))

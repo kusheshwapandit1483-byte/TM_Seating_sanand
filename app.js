@@ -24,6 +24,7 @@ const liveStopRecording = document.querySelector("#liveStopRecording");
 const openRecordings = document.querySelector("#openRecordings");
 const refreshRecordings = document.querySelector("#refreshRecordings");
 const backToLive = document.querySelector("#backToLive");
+const recordingSpeedButton = document.querySelector("#recordingSpeedButton");
 const recordingsList = document.querySelector("#recordingsList");
 const recordingPlayer = document.querySelector("#recordingPlayer");
 const recordingEmptyState = document.querySelector("#recordingEmptyState");
@@ -36,8 +37,22 @@ let demoAnimation = null;
 let activeView = "liveView";
 const previewSpeeds = [1, 1.25, 1.5, 2];
 let previewSpeedIndex = 0;
+const recordingSpeeds = [1, 1.25, 1.5, 2, 4];
+let recordingSpeedIndex = 0;
 
 
+
+function applyRecordingSpeed() {
+  const speed = recordingSpeeds[recordingSpeedIndex];
+  recordingPlayer.playbackRate = speed;
+  recordingSpeedButton.textContent = `Speed ${speed}x`;
+  recordingSpeedButton.title = `Recorded video speed ${speed}x`;
+}
+
+function cycleRecordingSpeed() {
+  recordingSpeedIndex = (recordingSpeedIndex + 1) % recordingSpeeds.length;
+  applyRecordingSpeed();
+}
 function applyPreviewSpeed() {
   const speed = previewSpeeds[previewSpeedIndex];
   speedButton.textContent = `${speed}x`;
@@ -273,6 +288,18 @@ async function apiRequest(path, options = {}) {
   return response.json();
 }
 
+
+function formatDuration(seconds) {
+  if (seconds % 3600 === 0) {
+    const hours = seconds / 3600;
+    return `${hours} hour${hours === 1 ? "" : "s"}`;
+  }
+  if (seconds % 60 === 0) {
+    const minutes = seconds / 60;
+    return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+  }
+  return `${seconds} seconds`;
+}
 function formatBytes(bytes) {
   if (!bytes) {
     return "0 MB";
@@ -311,7 +338,7 @@ async function refreshRecordingStatus() {
   try {
     const status = await apiRequest("/api/recording/status");
     if (status.running) {
-      recordingStatus.textContent = `Recording active. Clips every ${status.segmentSeconds} seconds. Retention ${status.retentionDays} days.`;
+      recordingStatus.textContent = `Recording active. Clips every ${formatDuration(status.segmentSeconds)}. Retention ${status.retentionDays} days.`;
     } else {
       recordingStatus.textContent = `Recorder is stopped. Retention ${status.retentionDays} days.`;
     }
@@ -415,6 +442,7 @@ liveStartRecording.addEventListener("click", startRecorder);
 liveStopRecording.addEventListener("click", stopRecorder);
 openRecordings.addEventListener("click", () => showView("recordingsView"));
 backToLive.addEventListener("click", () => showView("liveView"));
+recordingSpeedButton.addEventListener("click", cycleRecordingSpeed);
 refreshRecordings.addEventListener("click", refreshRecordingsList);
 
 navButtons.forEach((button) => {

@@ -50,7 +50,7 @@ The Python server records from this default source:
 rtsp://127.0.0.1:8554/pramacam
 ```
 
-Recording uses ffmpeg `-c copy`, so it does not reduce stream quality. By default it creates 5-minute MP4 clips in:
+Recording uses ffmpeg `-c copy`, so it does not reduce stream quality. By default it creates 30-minute MP4 clips in:
 
 ```text
 recordings/
@@ -79,7 +79,7 @@ So a 64 GB high-endurance card can keep around 2 days, assuming the OS and free-
 
 ## Retention
 
-The server keeps the latest 2 days of MP4 recordings by default and deletes older MP4 clips from the recordings folder during normal use.
+The server keeps the latest 2 days of MP4 recordings by default and deletes older MP4 clips from the recordings folder during normal use. Each clip is 30 minutes by default.
 
 Change retention if needed:
 
@@ -90,7 +90,7 @@ RETENTION_DAYS=2 python3 server.py
 Optional full settings:
 
 ```bash
-RECORDING_SOURCE="rtsp://127.0.0.1:8554/pramacam" SEGMENT_SECONDS=300 RETENTION_DAYS=2 PORT=8080 python3 server.py
+RECORDING_SOURCE="rtsp://127.0.0.1:8554/pramacam" SEGMENT_SECONDS=1800 RETENTION_DAYS=2 PORT=8080 python3 server.py
 ```
 
 ## Requirements on Raspberry Pi
