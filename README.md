@@ -1,6 +1,6 @@
 # TM Camera Monitor
 
-This is a lightweight Raspberry Pi camera monitor with live preview, always-on recording, retention cleanup, and browser playback for saved clips.
+This is a lightweight Raspberry Pi camera monitor with live preview, always-on recording, retention cleanup, and VLC playback for saved clips.
 
 ## Run the app on Raspberry Pi
 
@@ -42,7 +42,7 @@ HLS also works but usually has delay:
 http://127.0.0.1:8888/pramacam/index.m3u8
 ```
 
-## Recording and playback
+## Recording and VLC playback
 
 The Python server records automatically from this default source:
 
@@ -61,9 +61,9 @@ Use the website only:
 1. Open `http://RASPBERRY_PI_IP:8080`.
 2. Recording starts automatically; no manual Start/Stop button is shown.
 3. Open the `Recordings` tab.
-4. Click a clip to play it in the webpage.
+4. Click a clip to open it in VLC on the Raspberry Pi.
 
-You do not need to open the recordings folder for normal viewing.
+You do not need to open the recordings folder for normal viewing. The webpage stays open in the background; when VLC is closed, the user returns to the same page.
 
 ## Storage estimate
 
@@ -96,9 +96,11 @@ RECORDING_SOURCE="rtsp://127.0.0.1:8554/pramacam" SEGMENT_SECONDS=1800 RETENTION
 
 ## Requirements on Raspberry Pi
 
-Install ffmpeg if it is not installed:
+Install ffmpeg and VLC if they are not installed:
 
 ```bash
 sudo apt update
-sudo apt install ffmpeg
+sudo apt install ffmpeg vlc
 ```
+
+For VLC launching, run `python3 server.py` from the Raspberry Pi desktop session. If you run it as a systemd service, the service must have access to the desktop display, for example `DISPLAY=:0` and the correct `XAUTHORITY`. Do not run VLC as root.

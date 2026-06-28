@@ -19,6 +19,7 @@ DEFAULT_RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "2"))
 MAX_RETENTION_DAYS = 2
 MIN_RETENTION_DAYS = 1
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
+VLC_BIN = os.environ.get("VLC_BIN", "vlc")
 PORT = int(os.environ.get("PORT", "8080"))
 
 recorder_process = None
@@ -65,6 +66,14 @@ def json_response(handler, status, payload):
     handler.send_header("Cache-Control", "no-store")
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def read_json_body(handler):
+    length = int(handler.headers.get("Content-Length", "0") or "0")
+    try:
+        return json.loads(handler.rfile.read(length).decode("utf-8") or "{}")
+    except json.JSONDecodeError:
+        return {}
 
 
 def recorder_running():
@@ -233,6 +242,103 @@ def list_recordings():
     return files
 
 
+
+def open_recording_in_vlc(name):
+    if not name:
+        return {"ok": False, "message": "Recording name is required"}
+
+    safe_name = Path(str(name)).name
+    recording_path = (RECORDINGS_DIR / safe_name).resolve()
+    if (
+        RECORDINGS_DIR not in recording_path.parents
+        or recording_path.suffix.lower() != ".mp4"
+        or not recording_path.exists()
+        or not recording_path.is_file()
+    ):
+        return {"ok": False, "message": "Recording not found"}
+
+    cmd = [
+        VLC_BIN,
+        "--started-from-file",
+        "--no-video-title-show",
+        str(recording_path),
+    ]
+
+    try:
+        subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            cwd=str(ROOT),
+            start_new_session=True,
+        )
+    except Exception as exc:
+        return {"ok": False, "message": f"Could not open VLC: {exc}"}
+
+    return {"ok": True, "message": "Opened in VLC", "name": recording_path.name}
+
+
+def serve_recording_file(handler, path):
+    safe_path = Path(path).resolve()
+    if (
+        RECORDINGS_DIR not in safe_path.parents
+        or safe_path.suffix.lower() != ".mp4"
+        or not safe_path.exists()
+        or not safe_path.is_file()
+    ):
+        handler.send_error(HTTPStatus.NOT_FOUND, "Recording not found")
+        return
+
+    file_size = safe_path.stat().st_size
+    range_header = handler.headers.get("Range")
+    start = 0
+    end = file_size - 1
+    status = HTTPStatus.OK
+
+    if range_header:
+        try:
+            units, range_value = range_header.split("=", 1)
+            if units.strip().lower() == "bytes":
+                start_text, end_text = range_value.split("-", 1)
+                if start_text:
+                    start = int(start_text)
+                if end_text:
+                    end = int(end_text)
+                status = HTTPStatus.PARTIAL_CONTENT
+        except (ValueError, TypeError):
+            handler.send_error(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+            return
+
+    if file_size == 0 or start < 0 or end >= file_size or start > end:
+        handler.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+        handler.send_header("Content-Range", f"bytes */{file_size}")
+        handler.end_headers()
+        return
+
+    content_length = end - start + 1
+    handler.send_response(status)
+    handler.send_header("Content-Type", "video/mp4")
+    handler.send_header("Accept-Ranges", "bytes")
+    handler.send_header("Content-Length", str(content_length))
+    handler.send_header("Cache-Control", "no-store")
+    if status == HTTPStatus.PARTIAL_CONTENT:
+        handler.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+    handler.end_headers()
+
+    with safe_path.open("rb") as file:
+        file.seek(start)
+        remaining = content_length
+        while remaining > 0:
+            chunk = file.read(min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            try:
+                handler.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                break
+            remaining -= len(chunk)
+
 class CameraHandler(SimpleHTTPRequestHandler):
     def translate_path(self, path):
         parsed = urlparse(path)
@@ -267,6 +373,9 @@ class CameraHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/recordings":
             json_response(self, HTTPStatus.OK, {"recordings": list_recordings()})
             return
+        if parsed.path.startswith("/recordings/"):
+            serve_recording_file(self, self.translate_path(self.path))
+            return
         if parsed.path == "/api/settings":
             settings = load_settings()
             settings["maxRetentionDays"] = MAX_RETENTION_DAYS
@@ -276,12 +385,14 @@ class CameraHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/api/recordings/open-vlc":
+            payload = read_json_body(self)
+            result = open_recording_in_vlc(payload.get("name"))
+            status = HTTPStatus.OK if result["ok"] else HTTPStatus.BAD_REQUEST
+            json_response(self, status, result)
+            return
         if parsed.path == "/api/settings":
-            length = int(self.headers.get("Content-Length", "0") or "0")
-            try:
-                payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
-            except json.JSONDecodeError:
-                payload = {}
+            payload = read_json_body(self)
             settings = save_settings({"retentionDays": payload.get("retentionDays")})
             cleanup_old_recordings()
             settings["maxRetentionDays"] = MAX_RETENTION_DAYS

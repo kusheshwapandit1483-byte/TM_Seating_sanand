@@ -373,6 +373,40 @@ function renderEmptyRecordings(message) {
   recordingsList.appendChild(empty);
 }
 
+function showRecordingMessage(title, message) {
+  const titleNode = recordingEmptyState.querySelector("strong");
+  const messageNode = recordingEmptyState.querySelector("span");
+  titleNode.textContent = title;
+  messageNode.textContent = message;
+  recordingEmptyState.classList.remove("is-hidden");
+}
+
+function playRecordingInBrowser(clip) {
+  recordingPlayer.src = clip.url;
+  recordingPlayer.load();
+  applyRecordingSpeed();
+  recordingEmptyState.classList.add("is-hidden");
+  recordingPlayer.play().catch(() => undefined);
+}
+
+async function openRecordingInVlc(clip) {
+  recordingPlayer.pause();
+  recordingPlayer.removeAttribute("src");
+  recordingPlayer.load();
+  showRecordingMessage("Opening in VLC", "Close VLC to return to this webpage.");
+
+  try {
+    await apiRequest("/api/recordings/open-vlc", {
+      method: "POST",
+      body: JSON.stringify({ name: clip.name }),
+    });
+    showRecordingMessage("Opened in VLC", "Use VLC timeline controls to jump to any time, then close VLC to return here.");
+  } catch (error) {
+    showRecordingMessage("VLC did not open", "Using browser playback as fallback. Install VLC on the Raspberry Pi if needed.");
+    playRecordingInBrowser(clip);
+  }
+}
+
 async function refreshRecordingsList() {
   try {
     const data = await apiRequest("/api/recordings");
@@ -394,16 +428,13 @@ async function refreshRecordingsList() {
 
       const clipMeta = document.createElement("span");
       clipMeta.className = "clip-meta";
-      clipMeta.textContent = `${formatDate(clip.modifiedAt)} - ${formatBytes(clip.sizeBytes)}`;
+      clipMeta.textContent = `${formatDate(clip.modifiedAt)} - ${formatBytes(clip.sizeBytes)} - open in VLC`;
 
       button.append(clipName, clipMeta);
       button.addEventListener("click", () => {
         document.querySelectorAll(".clip-button").forEach((item) => item.classList.remove("is-selected"));
         button.classList.add("is-selected");
-        recordingPlayer.src = clip.url;
-        recordingPlayer.load();
-        recordingEmptyState.classList.add("is-hidden");
-        recordingPlayer.play().catch(() => undefined);
+        openRecordingInVlc(clip);
       });
       recordingsList.appendChild(button);
     });
