@@ -100,7 +100,7 @@ Install ffmpeg and VLC if they are not installed:
 
 ```bash
 sudo apt update
-sudo apt install ffmpeg vlc
+sudo apt install ffmpeg vlc wmctrl
 ```
 
-For VLC launching, run `python3 server.py` from the Raspberry Pi desktop session. If you run it as a systemd service, the service must have access to the desktop display, for example `DISPLAY=:0` and the correct `XAUTHORITY`. Do not run VLC as root.
+`wmctrl` is used to bring the VLC window to the front automatically after the webpage opens a clip. For VLC launching, run `python3 server.py` from the Raspberry Pi desktop session. If you run it as a systemd service, the service must have access to the desktop display, for example `DISPLAY=:0` and the correct `XAUTHORITY`. Do not run VLC as root.

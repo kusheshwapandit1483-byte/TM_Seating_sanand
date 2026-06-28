@@ -20,6 +20,8 @@ MAX_RETENTION_DAYS = 2
 MIN_RETENTION_DAYS = 1
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 VLC_BIN = os.environ.get("VLC_BIN", "vlc")
+VLC_RAISE_BIN = os.environ.get("VLC_RAISE_BIN", "wmctrl")
+VLC_RAISE_DELAY_SECONDS = float(os.environ.get("VLC_RAISE_DELAY_SECONDS", "1.2"))
 PORT = int(os.environ.get("PORT", "8080"))
 
 recorder_process = None
@@ -243,6 +245,28 @@ def list_recordings():
 
 
 
+def raise_vlc_window(recording_name):
+    if not VLC_RAISE_BIN:
+        return
+
+    time.sleep(VLC_RAISE_DELAY_SECONDS)
+    title_candidates = [recording_name, "VLC media player", "VLC"]
+    for title in title_candidates:
+        try:
+            result = subprocess.run(
+                [VLC_RAISE_BIN, "-a", title],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=2,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return
+        if result.returncode == 0:
+            return
+
+
 def open_recording_in_vlc(name):
     if not name:
         return {"ok": False, "message": "Recording name is required"}
@@ -260,6 +284,9 @@ def open_recording_in_vlc(name):
     cmd = [
         VLC_BIN,
         "--started-from-file",
+        "--no-one-instance",
+        "--no-playlist-enqueue",
+        "--video-on-top",
         "--no-video-title-show",
         str(recording_path),
     ]
@@ -273,6 +300,7 @@ def open_recording_in_vlc(name):
             cwd=str(ROOT),
             start_new_session=True,
         )
+        threading.Thread(target=raise_vlc_window, args=(recording_path.name,), daemon=True).start()
     except Exception as exc:
         return {"ok": False, "message": f"Could not open VLC: {exc}"}
 
