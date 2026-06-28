@@ -253,7 +253,7 @@ def raise_vlc_window(recording_name):
     title_candidates = [recording_name, "VLC media player", "VLC"]
     for title in title_candidates:
         try:
-            result = subprocess.run(
+            activate_result = subprocess.run(
                 [VLC_RAISE_BIN, "-a", title],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
@@ -261,9 +261,17 @@ def raise_vlc_window(recording_name):
                 timeout=2,
                 check=False,
             )
+            if activate_result.returncode == 0:
+                subprocess.run(
+                    [VLC_RAISE_BIN, "-r", title, "-b", "add,above,fullscreen"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=2,
+                    check=False,
+                )
+                return
         except (OSError, subprocess.SubprocessError):
-            return
-        if result.returncode == 0:
             return
 
 
@@ -287,6 +295,7 @@ def open_recording_in_vlc(name):
         "--no-one-instance",
         "--no-playlist-enqueue",
         "--video-on-top",
+        "--fullscreen",
         "--no-video-title-show",
         str(recording_path),
     ]

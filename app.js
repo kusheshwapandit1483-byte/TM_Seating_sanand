@@ -389,7 +389,20 @@ function playRecordingInBrowser(clip) {
   recordingPlayer.play().catch(() => undefined);
 }
 
+async function exitBrowserFullscreenForVlc() {
+  if (!document.fullscreenElement || !document.exitFullscreen) {
+    return;
+  }
+
+  try {
+    await document.exitFullscreen();
+  } catch (error) {
+    // The backend still opens VLC fullscreen if the browser refuses to exit.
+  }
+}
+
 async function openRecordingInVlc(clip) {
+  await exitBrowserFullscreenForVlc();
   recordingPlayer.pause();
   recordingPlayer.removeAttribute("src");
   recordingPlayer.load();
