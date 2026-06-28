@@ -79,8 +79,10 @@ cat > /usr/local/bin/tm-camera-kiosk-start <<'KIOSK'
 set -euo pipefail
 
 URL="${KIOSK_URL:-http://127.0.0.1:8080}"
+LOG_FILE="${HOME}/tm-camera-kiosk.log"
 
-export DISPLAY="${DISPLAY:-:0}"
+exec >>"${LOG_FILE}" 2>&1
+echo "$(date -Is) starting kiosk for ${URL}"
 
 for _ in $(seq 1 60); do
   if curl -fsS "${URL}" >/dev/null 2>&1; then
@@ -107,6 +109,7 @@ if [[ -z "${CHROME}" ]]; then
   exit 1
 fi
 
+echo "$(date -Is) launching ${CHROME}"
 exec "${CHROME}" \
   --kiosk "${URL}" \
   --noerrdialogs \
@@ -118,15 +121,40 @@ exec "${CHROME}" \
 KIOSK
 chmod 755 /usr/local/bin/tm-camera-kiosk-start
 
-install -d -m 755 /home/${KIOSK_USER}/.config/autostart
+install -d -m 755 "/home/${KIOSK_USER}/.config/autostart"
 cat > "/home/${KIOSK_USER}/.config/autostart/tm-camera-kiosk.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=TM Camera Kiosk
 Exec=env KIOSK_URL=${KIOSK_URL} /usr/local/bin/tm-camera-kiosk-start
+Terminal=false
 X-GNOME-Autostart-enabled=true
 DESKTOP
+
+for session in LXDE-pi LXDE; do
+  install -d -m 755 "/home/${KIOSK_USER}/.config/lxsession/${session}"
+  cat > "/home/${KIOSK_USER}/.config/lxsession/${session}/autostart" <<LXDE
+@xset s off
+@xset -dpms
+@xset s noblank
+@env KIOSK_URL=${KIOSK_URL} /usr/local/bin/tm-camera-kiosk-start
+LXDE
+done
+
+install -d -m 755 "/home/${KIOSK_USER}/.config/labwc"
+cat > "/home/${KIOSK_USER}/.config/labwc/autostart" <<LABWC
+env KIOSK_URL=${KIOSK_URL} /usr/local/bin/tm-camera-kiosk-start &
+LABWC
+
 chown -R "${KIOSK_USER}:${KIOSK_USER}" "/home/${KIOSK_USER}/.config"
+
+SESSION_NAME=""
+for session in LXDE-pi LXDE lightdm-xsession labwc wayfire; do
+  if [[ -f "/usr/share/xsessions/${session}.desktop" || -f "/usr/share/wayland-sessions/${session}.desktop" ]]; then
+    SESSION_NAME="${session}"
+    break
+  fi
+done
 
 install -d -m 755 /etc/lightdm/lightdm.conf.d
 cat > /etc/lightdm/lightdm.conf.d/90-tm-camera-kiosk.conf <<LIGHTDM
@@ -134,15 +162,28 @@ cat > /etc/lightdm/lightdm.conf.d/90-tm-camera-kiosk.conf <<LIGHTDM
 autologin-user=${KIOSK_USER}
 autologin-user-timeout=0
 LIGHTDM
+if [[ -n "${SESSION_NAME}" ]]; then
+  cat >> /etc/lightdm/lightdm.conf.d/90-tm-camera-kiosk.conf <<LIGHTDM
+user-session=${SESSION_NAME}
+autologin-session=${SESSION_NAME}
+LIGHTDM
+fi
+
+systemctl enable lightdm.service >/dev/null 2>&1 || systemctl enable lightdm >/dev/null 2>&1 || true
+systemctl set-default graphical.target >/dev/null 2>&1 || true
 
 echo
 echo "Kiosk setup complete."
 echo "App service: ${SERVICE_NAME}.service running as ${APP_RUN_USER}"
 echo "Kiosk user: ${KIOSK_USER} (no sudo, password login locked)"
 echo "Kiosk URL: ${KIOSK_URL}"
+if [[ -n "${SESSION_NAME}" ]]; then
+  echo "Desktop session: ${SESSION_NAME}"
+fi
 echo
 echo "Next commands:"
 echo "  sudo systemctl start ${SERVICE_NAME}.service"
+echo "  sudo systemctl restart lightdm"
 echo "  sudo reboot"
 echo
-echo "Admin access remains on your existing admin user. Use SSH or switch/login as admin for maintenance."
+echo "Admin access remains on your existing admin user. Use Ctrl+Alt+F2 or SSH for maintenance."

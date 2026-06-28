@@ -114,12 +114,29 @@ This setup creates a limited `operator` user with no sudo access, starts the cam
 cd /path/to/TM_SEATING_SANAND
 sudo APP_DIR=$(pwd) KIOSK_USER=operator KIOSK_URL=http://127.0.0.1:8080 bash scripts/setup-kiosk.sh
 sudo systemctl start tm-camera-monitor.service
+sudo systemctl restart lightdm
 sudo reboot
 ```
 
 After reboot, the Pi auto-logs into `operator` and opens only the camera page. Your existing admin user remains password protected for SSH, terminal, settings, and maintenance.
 
-If the first setup attempt stopped at `The group 'operator' already exists`, pull the latest code and run the same setup command again. The script now handles that partial state and will continue creating the service.
+If setup stopped partway or the Pi boots but does not open the kiosk page, pull the latest code and run the same setup command again. The script is safe to rerun and now installs multiple autostart methods for Raspberry Pi desktop variants.
+
+If the Pi boots and nothing opens, press `Ctrl + Alt + F2`, login as admin, and run:
+
+```bash
+cd /path/to/TM_SEATING_SANAND
+sudo bash scripts/check-kiosk.sh
+```
+
+Then rerun setup:
+
+```bash
+sudo APP_DIR=$(pwd) KIOSK_USER=operator KIOSK_URL=http://127.0.0.1:8080 bash scripts/setup-kiosk.sh
+sudo systemctl start tm-camera-monitor.service
+sudo systemctl restart lightdm
+sudo reboot
+```
 
 VLC can stay installed on the Pi for admin/manual checking. The kiosk user does not get sudo or normal desktop access.
 
