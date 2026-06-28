@@ -509,6 +509,23 @@ def ensure_recording_hls(name):
     }
 
 
+def stream_file_body(handler, safe_path, start=0, length=None):
+    with safe_path.open("rb") as file:
+        file.seek(start)
+        remaining = length
+        while remaining is None or remaining > 0:
+            read_size = 1024 * 1024 if remaining is None else min(1024 * 1024, remaining)
+            chunk = file.read(read_size)
+            if not chunk:
+                break
+            try:
+                handler.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                break
+            if remaining is not None:
+                remaining -= len(chunk)
+
+
 def serve_hls_file(handler, path):
     safe_path = Path(path).resolve()
     if (
@@ -521,14 +538,13 @@ def serve_hls_file(handler, path):
         return
 
     content_type = "application/vnd.apple.mpegurl" if safe_path.suffix.lower() == ".m3u8" else "video/mp2t"
-    body = safe_path.read_bytes()
+    file_size = safe_path.stat().st_size
     handler.send_response(HTTPStatus.OK)
     handler.send_header("Content-Type", content_type)
-    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Content-Length", str(file_size))
     handler.send_header("Cache-Control", "no-store")
     handler.end_headers()
-    handler.wfile.write(body)
-
+    stream_file_body(handler, safe_path)
 
 def serve_recording_file(handler, path):
     safe_path = Path(path).resolve()
@@ -554,8 +570,11 @@ def serve_recording_file(handler, path):
                 start_text, end_text = range_value.split("-", 1)
                 if start_text:
                     start = int(start_text)
-                if end_text:
-                    end = int(end_text)
+                    if end_text:
+                        end = int(end_text)
+                elif end_text:
+                    suffix_length = int(end_text)
+                    start = max(file_size - suffix_length, 0)
                 status = HTTPStatus.PARTIAL_CONTENT
         except (ValueError, TypeError):
             handler.send_error(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
@@ -577,18 +596,7 @@ def serve_recording_file(handler, path):
         handler.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
     handler.end_headers()
 
-    with safe_path.open("rb") as file:
-        file.seek(start)
-        remaining = content_length
-        while remaining > 0:
-            chunk = file.read(min(1024 * 1024, remaining))
-            if not chunk:
-                break
-            try:
-                handler.wfile.write(chunk)
-            except (BrokenPipeError, ConnectionResetError):
-                break
-            remaining -= len(chunk)
+    stream_file_body(handler, safe_path, start, content_length)
 
 class CameraHandler(SimpleHTTPRequestHandler):
     def translate_path(self, path):

@@ -80,8 +80,9 @@ p {
 }
 
 h1 {
-  font-size: 18px;
-  line-height: 1.2;
+  max-width: 190px;
+  font-size: 17px;
+  line-height: 1.22;
 }
 
 .brand-block p,
@@ -89,6 +90,15 @@ h1 {
   color: var(--muted);
 }
 
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: 18px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
 .nav-list {
   display: grid;
   gap: 8px;

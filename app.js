@@ -19,6 +19,9 @@ const directVideoExtensions = [".mp4", ".webm", ".ogg", ".mov"];
 let hlsPlayer = null;
 let recordingHlsPlayer = null;
 let activeView = "liveView";
+let recordingFallbackClip = null;
+let recordingFallbackTried = false;
+let recordingFallbackInProgress = false;
 
 function formatCount(value) {
   const number = Number(value);
@@ -228,7 +231,7 @@ function playRecordingSource(url) {
       recordingPlayer.play().catch(() => undefined);
     });
     recordingHlsPlayer.on(window.Hls.Events.ERROR, () => {
-      showRecordingMessage("Playback unavailable", "Could not play this HLS recording. Try refresh, then select it again.");
+      showRecordingMessage("Playback unavailable", "Could not play this prepared recording. Try refresh, then select it again.");
     });
     return;
   }
@@ -238,22 +241,39 @@ function playRecordingSource(url) {
   recordingEmptyState.classList.add("is-hidden");
   recordingPlayer.play().catch(() => undefined);
 }
+async function prepareRecordingHlsFallback() {
+  if (!recordingFallbackClip || recordingFallbackInProgress) {
+    return;
+  }
+  if (recordingFallbackTried) {
+    showRecordingMessage("Playback unavailable", "This recording could not be played in the browser.");
+    return;
+  }
 
-async function playRecordingClip(clip) {
-  showRecordingMessage("Preparing recording", "Preparing browser playback for this clip.");
+  recordingFallbackTried = true;
+  recordingFallbackInProgress = true;
+  showRecordingMessage("Preparing recording", "Large video needs browser playback preparation. Please wait.");
 
   try {
     const result = await apiRequest("/api/recordings/hls", {
       method: "POST",
-      body: JSON.stringify({ name: clip.name }),
+      body: JSON.stringify({ name: recordingFallbackClip.name }),
     });
+    recordingFallbackInProgress = false;
     playRecordingSource(result.playlistUrl);
   } catch (error) {
-    showRecordingMessage("Using direct playback", "HLS preparation failed, so the app is trying the original MP4 file.");
-    playRecordingSource(clip.url);
+    recordingFallbackInProgress = false;
+    showRecordingMessage("Playback unavailable", "This recording could not be prepared for browser playback. Try refresh, then select it again.");
   }
 }
 
+async function playRecordingClip(clip) {
+  recordingFallbackClip = clip;
+  recordingFallbackTried = false;
+  recordingFallbackInProgress = false;
+  showRecordingMessage("Loading recording", "Opening the recorded video.");
+  playRecordingSource(clip.url);
+}
 async function refreshRecordingsList() {
   try {
     const data = await apiRequest("/api/recordings");
@@ -310,6 +330,7 @@ navButtons.forEach((button) => {
 });
 
 refreshRecordings.addEventListener("click", refreshRecordingsList);
+recordingPlayer.addEventListener("error", prepareRecordingHlsFallback);
 
 frame.addEventListener("load", () => showEmptyState(false));
 frame.addEventListener("error", () => showEmptyState(true));
