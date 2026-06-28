@@ -25,6 +25,11 @@ const recordingSpeedButton = document.querySelector("#recordingSpeedButton");
 const recordingsList = document.querySelector("#recordingsList");
 const recordingPlayer = document.querySelector("#recordingPlayer");
 const recordingEmptyState = document.querySelector("#recordingEmptyState");
+const personCount = document.querySelector("#personCount");
+const entryCount = document.querySelector("#entryCount");
+const exitCount = document.querySelector("#exitCount");
+const esp32StatusBadge = document.querySelector("#esp32StatusBadge");
+const esp32StatusText = document.querySelector("#esp32StatusText");
 
 const storageKey = "tm-camera-preview-url";
 const directVideoExtensions = [".mp4", ".webm", ".ogg", ".mov"];
@@ -39,6 +44,50 @@ const recordingSpeeds = [1, 1.25, 1.5, 2, 4];
 let recordingSpeedIndex = 0;
 
 
+function formatCount(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? String(number) : "--";
+}
+
+function setEsp32Status(kind, label, message) {
+  esp32StatusBadge.textContent = label;
+  esp32StatusBadge.classList.toggle("is-live", kind === "live");
+  esp32StatusBadge.classList.toggle("is-error", kind === "error");
+  esp32StatusText.textContent = message;
+}
+
+async function refreshEsp32Status() {
+  try {
+    const status = await apiRequest("/api/esp32/status");
+    const data = status.data || {};
+    personCount.textContent = formatCount(data.occupancy);
+    entryCount.textContent = formatCount(data.total_in);
+    exitCount.textContent = formatCount(data.total_out);
+
+    if (status.connected && data.state) {
+      const age = Number(status.ageSeconds || 0);
+      const stale = age > 5;
+      setEsp32Status(
+        stale ? "error" : "live",
+        stale ? "Stale" : data.state,
+        stale ? "ESP32 connected, but count data is older than 5 seconds." : "Receiving final count from ESP32-S3."
+      );
+      return;
+    }
+
+    if (status.connected) {
+      setEsp32Status("live", "Connected", "Waiting for the first ESP32 count message.");
+      return;
+    }
+
+    setEsp32Status("error", "Offline", status.error ? `ESP32 MQTT: ${status.error}` : "Waiting for ESP32 MQTT status.");
+  } catch (error) {
+    personCount.textContent = "--";
+    entryCount.textContent = "--";
+    exitCount.textContent = "--";
+    setEsp32Status("error", "Offline", "Dashboard server is not returning ESP32 status.");
+  }
+}
 
 function applyRecordingSpeed() {
   const speed = recordingSpeeds[recordingSpeedIndex];
@@ -592,8 +641,10 @@ if (savedUrl) {
 recordingEmptyState.classList.remove("is-hidden");
 updateClock();
 refreshRecordingStatus();
+refreshEsp32Status();
 setInterval(updateClock, 1000);
 setInterval(refreshRecordingStatus, 5000);
+setInterval(refreshEsp32Status, 1000);
 setInterval(() => {
   if (activeView === "recordingsView") {
     refreshRecordingsList();

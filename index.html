@@ -50,6 +50,28 @@
             <option value="2">2 days</option>
           </select>
         </section>
+
+        <section class="camera-panel count-panel" aria-labelledby="roomCountTitle">
+          <div class="panel-heading-row">
+            <h2 id="roomCountTitle">Room Count</h2>
+            <span id="esp32StatusBadge" class="status-badge">Connecting</span>
+          </div>
+          <div class="count-grid" aria-live="polite">
+            <div class="count-tile primary-count">
+              <span>Persons Inside</span>
+              <strong id="personCount">--</strong>
+            </div>
+            <div class="count-tile">
+              <span>Entries</span>
+              <strong id="entryCount">--</strong>
+            </div>
+            <div class="count-tile">
+              <span>Exits</span>
+              <strong id="exitCount">--</strong>
+            </div>
+          </div>
+          <p id="esp32StatusText" class="hint">Waiting for ESP32 status.</p>
+        </section>
       </aside>
 
       <section class="monitor">

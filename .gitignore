@@ -2,3 +2,5 @@ recordings/
 __pycache__/
 *.pyc
 settings.json
+esp32file/
+.tmp_pycache/

@@ -3,6 +3,7 @@ import json
 import os
 import signal
 import shutil
+import socket
 import subprocess
 import threading
 import time
@@ -23,12 +24,172 @@ MIN_RETENTION_DAYS = 1
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 HLS_SEGMENT_SECONDS = int(os.environ.get("HLS_SEGMENT_SECONDS", "6"))
 PORT = int(os.environ.get("PORT", "8080"))
+ESP32_MQTT_HOST = os.environ.get("ESP32_MQTT_HOST", "192.168.10.1")
+ESP32_MQTT_PORT = int(os.environ.get("ESP32_MQTT_PORT", "1883"))
+ESP32_MQTT_TOPIC = os.environ.get("ESP32_MQTT_TOPIC", "eagle/system/status")
 
 recorder_process = None
 recorder_started_at = None
 recorder_log = None
 recorder_lock = threading.Lock()
 shutdown_event = threading.Event()
+esp32_monitor = None
+
+
+def mqtt_remaining_length(length):
+    encoded = bytearray()
+    while True:
+        digit = length % 128
+        length //= 128
+        if length > 0:
+            digit |= 128
+        encoded.append(digit)
+        if length == 0:
+            return bytes(encoded)
+
+
+def mqtt_string(value):
+    payload = value.encode("utf-8")
+    return len(payload).to_bytes(2, "big") + payload
+
+
+def read_exact(sock, length):
+    chunks = bytearray()
+    while len(chunks) < length:
+        chunk = sock.recv(length - len(chunks))
+        if not chunk:
+            raise ConnectionError("MQTT socket closed")
+        chunks.extend(chunk)
+    return bytes(chunks)
+
+
+def read_mqtt_packet(sock):
+    header = read_exact(sock, 1)[0]
+    multiplier = 1
+    remaining = 0
+    while True:
+        digit = read_exact(sock, 1)[0]
+        remaining += (digit & 127) * multiplier
+        if (digit & 128) == 0:
+            break
+        multiplier *= 128
+        if multiplier > 128 * 128 * 128:
+            raise ValueError("Malformed MQTT remaining length")
+    return header, read_exact(sock, remaining)
+
+
+class ESP32StatusMonitor:
+    def __init__(self, host, port, topic):
+        self.host = host
+        self.port = port
+        self.topic = topic
+        self.lock = threading.Lock()
+        self.latest = None
+        self.connected = False
+        self.last_error = "not connected"
+        self.last_message_at = None
+        self.thread = threading.Thread(target=self.run, daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def snapshot(self):
+        with self.lock:
+            payload = dict(self.latest or {})
+            last_message_at = self.last_message_at
+            age_seconds = time.time() - last_message_at if last_message_at else None
+            return {
+                "connected": self.connected,
+                "host": self.host,
+                "port": self.port,
+                "topic": self.topic,
+                "lastMessageAt": last_message_at,
+                "ageSeconds": age_seconds,
+                "error": self.last_error,
+                "data": payload,
+            }
+
+    def set_status(self, connected, error=None):
+        with self.lock:
+            self.connected = connected
+            self.last_error = None if connected else error
+
+    def set_latest(self, payload):
+        with self.lock:
+            self.latest = payload
+            self.connected = True
+            self.last_error = None
+            self.last_message_at = time.time()
+
+    def connect_packet(self):
+        client_id = f"tm-dashboard-{os.getpid()}"
+        variable_header = mqtt_string("MQTT") + bytes([4, 2]) + (30).to_bytes(2, "big")
+        payload = mqtt_string(client_id)
+        body = variable_header + payload
+        return bytes([0x10]) + mqtt_remaining_length(len(body)) + body
+
+    def subscribe_packet(self):
+        packet_id = (1).to_bytes(2, "big")
+        body = packet_id + mqtt_string(self.topic) + bytes([0])
+        return bytes([0x82]) + mqtt_remaining_length(len(body)) + body
+
+    def send_ping(self, sock):
+        sock.sendall(b"\xc0\x00")
+
+    def handle_publish(self, header, body, sock):
+        if len(body) < 2:
+            return
+        topic_len = int.from_bytes(body[:2], "big")
+        topic_start = 2
+        topic_end = topic_start + topic_len
+        topic = body[topic_start:topic_end].decode("utf-8", errors="replace")
+        qos = (header >> 1) & 0x03
+        payload_start = topic_end
+        packet_id = None
+        if qos:
+            packet_id = body[payload_start:payload_start + 2]
+            payload_start += 2
+        if topic == self.topic:
+            payload_text = body[payload_start:].decode("utf-8", errors="replace")
+            self.set_latest(json.loads(payload_text))
+        if qos == 1 and packet_id:
+            sock.sendall(b"\x40\x02" + packet_id)
+
+    def mqtt_session(self):
+        with socket.create_connection((self.host, self.port), timeout=10) as sock:
+            sock.settimeout(10)
+            sock.sendall(self.connect_packet())
+            header, body = read_mqtt_packet(sock)
+            if header >> 4 != 2 or len(body) < 2 or body[1] != 0:
+                raise ConnectionError("MQTT CONNACK failed")
+            sock.sendall(self.subscribe_packet())
+            header, body = read_mqtt_packet(sock)
+            if header >> 4 != 9:
+                raise ConnectionError("MQTT SUBACK failed")
+            self.set_status(True, None)
+            last_ping = time.time()
+            while not shutdown_event.is_set():
+                try:
+                    header, body = read_mqtt_packet(sock)
+                except socket.timeout:
+                    now = time.time()
+                    if now - last_ping >= 20:
+                        self.send_ping(sock)
+                        last_ping = now
+                    continue
+                packet_type = header >> 4
+                if packet_type == 3:
+                    self.handle_publish(header, body, sock)
+                elif packet_type == 13:
+                    continue
+
+    def run(self):
+        while not shutdown_event.is_set():
+            try:
+                self.mqtt_session()
+            except Exception as exc:
+                self.set_status(False, str(exc))
+                shutdown_event.wait(5)
 
 
 def clamp_retention_days(value):
@@ -461,6 +622,10 @@ class CameraHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/api/esp32/status":
+            payload = esp32_monitor.snapshot() if esp32_monitor else {"connected": False, "error": "monitor not started", "data": {}}
+            json_response(self, HTTPStatus.OK, payload)
+            return
         if parsed.path == "/api/recording/status":
             ensure_recorder_running()
             json_response(self, HTTPStatus.OK, recording_status())
@@ -522,11 +687,14 @@ if __name__ == "__main__":
     save_settings(load_settings())
     start_result = start_recorder()
     print(start_result["message"])
+    esp32_monitor = ESP32StatusMonitor(ESP32_MQTT_HOST, ESP32_MQTT_PORT, ESP32_MQTT_TOPIC)
+    esp32_monitor.start()
     maintenance = threading.Thread(target=maintenance_loop, daemon=True)
     maintenance.start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), CameraHandler)
     print(f"Camera Monitor running at http://0.0.0.0:{PORT}")
     print(f"Recording source: {RECORDING_SOURCE}")
+    print(f"ESP32 MQTT: {ESP32_MQTT_HOST}:{ESP32_MQTT_PORT} topic {ESP32_MQTT_TOPIC}")
     print(f"Recordings folder: {RECORDINGS_DIR}")
     print(f"Retention: {get_retention_days()} day(s), maximum {MAX_RETENTION_DAYS} day(s)")
     server.serve_forever()
