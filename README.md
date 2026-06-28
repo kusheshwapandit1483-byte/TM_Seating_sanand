@@ -103,3 +103,29 @@ Install ffmpeg if it is not installed:
 sudo apt update
 sudo apt install ffmpeg
 ```
+
+## Kiosk mode
+
+Use kiosk mode when the Raspberry Pi should boot directly into the camera webpage for the client/operator.
+
+This setup creates a limited `operator` user with no sudo access, starts the camera server as a systemd service, and auto-opens Chromium to the camera webpage:
+
+```bash
+cd /path/to/TM_SEATING_SANAND
+sudo APP_DIR=$(pwd) KIOSK_USER=operator KIOSK_URL=http://127.0.0.1:8080 bash scripts/setup-kiosk.sh
+sudo systemctl start tm-camera-monitor.service
+sudo reboot
+```
+
+After reboot, the Pi auto-logs into `operator` and opens only the camera page. Your existing admin user remains password protected for SSH, terminal, settings, and maintenance.
+
+VLC can stay installed on the Pi for admin/manual checking. The kiosk user does not get sudo or normal desktop access.
+
+To disable kiosk mode:
+
+```bash
+sudo bash scripts/disable-kiosk.sh
+sudo reboot
+```
+
+More notes are in `scripts/disable-kiosk.md`.

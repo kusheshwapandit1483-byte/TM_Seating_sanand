@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+KIOSK_USER="${KIOSK_USER:-operator}"
+KIOSK_URL="${KIOSK_URL:-http://127.0.0.1:8080}"
+APP_DIR="${APP_DIR:-$(pwd)}"
+APP_RUN_USER="${APP_RUN_USER:-${SUDO_USER:-$(id -un)}}"
+SERVICE_NAME="tm-camera-monitor"
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "Run with sudo: sudo APP_DIR=/path/to/TM_SEATING_SANAND bash scripts/setup-kiosk.sh" >&2
+  exit 1
+fi
+
+if [[ ! -f "${APP_DIR}/server.py" ]]; then
+  echo "server.py not found in APP_DIR=${APP_DIR}" >&2
+  echo "Run from the project folder or pass APP_DIR=/path/to/TM_SEATING_SANAND" >&2
+  exit 1
+fi
+
+if ! id "${APP_RUN_USER}" >/dev/null 2>&1; then
+  echo "APP_RUN_USER=${APP_RUN_USER} does not exist" >&2
+  exit 1
+fi
+
+echo "Installing required packages"
+apt-get update
+apt-get install -y ffmpeg curl unclutter x11-xserver-utils lightdm
+if apt-cache show chromium-browser >/dev/null 2>&1; then
+  apt-get install -y chromium-browser
+elif apt-cache show chromium >/dev/null 2>&1; then
+  apt-get install -y chromium
+else
+  echo "Could not find chromium-browser or chromium package" >&2
+  exit 1
+fi
+
+if ! id "${KIOSK_USER}" >/dev/null 2>&1; then
+  echo "Creating kiosk user: ${KIOSK_USER}"
+  adduser --disabled-password --gecos "Camera Kiosk" "${KIOSK_USER}"
+fi
+
+passwd -l "${KIOSK_USER}" >/dev/null 2>&1 || true
+gpasswd -d "${KIOSK_USER}" sudo >/dev/null 2>&1 || true
+for group in video audio render input; do
+  if getent group "${group}" >/dev/null 2>&1; then
+    usermod -aG "${group}" "${KIOSK_USER}"
+  fi
+done
+
+cat > "/etc/systemd/system/${SERVICE_NAME}.service" <<SERVICE
+[Unit]
+Description=TM Camera Monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${APP_RUN_USER}
+WorkingDirectory=${APP_DIR}
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 ${APP_DIR}/server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+systemctl daemon-reload
+systemctl enable "${SERVICE_NAME}.service"
+
+cat > /usr/local/bin/tm-camera-kiosk-start <<'KIOSK'
+#!/usr/bin/env bash
+set -euo pipefail
+
+URL="${KIOSK_URL:-http://127.0.0.1:8080}"
+
+export DISPLAY="${DISPLAY:-:0}"
+
+for _ in $(seq 1 60); do
+  if curl -fsS "${URL}" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+xset s off >/dev/null 2>&1 || true
+xset -dpms >/dev/null 2>&1 || true
+xset s noblank >/dev/null 2>&1 || true
+unclutter -idle 0.5 -root >/dev/null 2>&1 &
+
+CHROME=""
+for candidate in chromium-browser chromium; do
+  if command -v "${candidate}" >/dev/null 2>&1; then
+    CHROME="${candidate}"
+    break
+  fi
+done
+
+if [[ -z "${CHROME}" ]]; then
+  echo "Chromium not found" >&2
+  exit 1
+fi
+
+exec "${CHROME}" \
+  --kiosk "${URL}" \
+  --noerrdialogs \
+  --disable-infobars \
+  --disable-session-crashed-bubble \
+  --disable-restore-session-state \
+  --check-for-update-interval=31536000 \
+  --autoplay-policy=no-user-gesture-required
+KIOSK
+chmod 755 /usr/local/bin/tm-camera-kiosk-start
+
+install -d -m 755 /home/${KIOSK_USER}/.config/autostart
+cat > "/home/${KIOSK_USER}/.config/autostart/tm-camera-kiosk.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=TM Camera Kiosk
+Exec=env KIOSK_URL=${KIOSK_URL} /usr/local/bin/tm-camera-kiosk-start
+X-GNOME-Autostart-enabled=true
+DESKTOP
+chown -R "${KIOSK_USER}:${KIOSK_USER}" "/home/${KIOSK_USER}/.config"
+
+install -d -m 755 /etc/lightdm/lightdm.conf.d
+cat > /etc/lightdm/lightdm.conf.d/90-tm-camera-kiosk.conf <<LIGHTDM
+[Seat:*]
+autologin-user=${KIOSK_USER}
+autologin-user-timeout=0
+LIGHTDM
+
+echo
+echo "Kiosk setup complete."
+echo "App service: ${SERVICE_NAME}.service running as ${APP_RUN_USER}"
+echo "Kiosk user: ${KIOSK_USER} (no sudo, password login locked)"
+echo "Kiosk URL: ${KIOSK_URL}"
+echo
+echo "Next commands:"
+echo "  sudo systemctl start ${SERVICE_NAME}.service"
+echo "  sudo reboot"
+echo
+echo "Admin access remains on your existing admin user. Use SSH or switch/login as admin for maintenance."
