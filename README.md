@@ -119,6 +119,8 @@ sudo reboot
 
 After reboot, the Pi auto-logs into `operator` and opens only the camera page. Your existing admin user remains password protected for SSH, terminal, settings, and maintenance.
 
+If the first setup attempt stopped at `The group 'operator' already exists`, pull the latest code and run the same setup command again. The script now handles that partial state and will continue creating the service.
+
 VLC can stay installed on the Pi for admin/manual checking. The kiosk user does not get sudo or normal desktop access.
 
 Admin access from kiosk with keyboard:

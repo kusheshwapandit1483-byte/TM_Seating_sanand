@@ -37,7 +37,11 @@ fi
 
 if ! id "${KIOSK_USER}" >/dev/null 2>&1; then
   echo "Creating kiosk user: ${KIOSK_USER}"
-  adduser --disabled-password --gecos "Camera Kiosk" "${KIOSK_USER}"
+  if getent group "${KIOSK_USER}" >/dev/null 2>&1; then
+    adduser --disabled-password --gecos "Camera Kiosk" --ingroup "${KIOSK_USER}" "${KIOSK_USER}"
+  else
+    adduser --disabled-password --gecos "Camera Kiosk" "${KIOSK_USER}"
+  fi
 fi
 
 passwd -l "${KIOSK_USER}" >/dev/null 2>&1 || true
