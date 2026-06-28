@@ -29,6 +29,7 @@ const recordingEmptyState = document.querySelector("#recordingEmptyState");
 const storageKey = "tm-camera-preview-url";
 const directVideoExtensions = [".mp4", ".webm", ".ogg", ".mov"];
 let hlsPlayer = null;
+let recordingHlsPlayer = null;
 let demoStream = null;
 let demoAnimation = null;
 let activeView = "liveView";
@@ -381,29 +382,63 @@ function showRecordingMessage(title, message) {
   recordingEmptyState.classList.remove("is-hidden");
 }
 
-function playRecordingInBrowser(clip) {
-  recordingPlayer.src = clip.url;
+function destroyRecordingHls() {
+  if (recordingHlsPlayer) {
+    recordingHlsPlayer.destroy();
+    recordingHlsPlayer = null;
+  }
+}
+
+function playRecordingSource(url) {
+  destroyRecordingHls();
+  recordingPlayer.pause();
+  recordingPlayer.removeAttribute("src");
   recordingPlayer.load();
   applyRecordingSpeed();
+
+  if (isHlsUrl(url) && recordingPlayer.canPlayType("application/vnd.apple.mpegurl")) {
+    recordingPlayer.src = url;
+    recordingPlayer.load();
+    recordingEmptyState.classList.add("is-hidden");
+    recordingPlayer.play().catch(() => undefined);
+    return;
+  }
+
+  if (isHlsUrl(url) && window.Hls && window.Hls.isSupported()) {
+    recordingHlsPlayer = new window.Hls({
+      backBufferLength: 60,
+    });
+    recordingHlsPlayer.loadSource(url);
+    recordingHlsPlayer.attachMedia(recordingPlayer);
+    recordingHlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, () => {
+      applyRecordingSpeed();
+      recordingEmptyState.classList.add("is-hidden");
+      recordingPlayer.play().catch(() => undefined);
+    });
+    recordingHlsPlayer.on(window.Hls.Events.ERROR, () => {
+      showRecordingMessage("Playback unavailable", "Could not play this HLS recording. Try refresh, then select it again.");
+    });
+    return;
+  }
+
+  recordingPlayer.src = url;
+  recordingPlayer.load();
   recordingEmptyState.classList.add("is-hidden");
   recordingPlayer.play().catch(() => undefined);
 }
 
-async function openRecordingInVlc(clip) {
-  recordingPlayer.pause();
-  recordingPlayer.removeAttribute("src");
-  recordingPlayer.load();
-  showRecordingMessage("Opening in VLC", "Close VLC to return to this webpage.");
+async function playRecordingClip(clip) {
+  showRecordingMessage("Preparing recording", "Preparing browser playback for this 30-minute clip.");
 
   try {
-    await apiRequest("/api/recordings/open-vlc", {
+    const result = await apiRequest("/api/recordings/hls", {
       method: "POST",
       body: JSON.stringify({ name: clip.name }),
     });
-    showRecordingMessage("Opened in VLC", "Use VLC timeline controls to jump to any time, then close VLC to return here.");
+    playRecordingSource(result.playlistUrl);
   } catch (error) {
-    showRecordingMessage("VLC did not open", "Using browser playback as fallback. Install VLC on the Raspberry Pi if needed.");
-    playRecordingInBrowser(clip);
+    showRecordingMessage("Using direct playback", "HLS preparation failed, so the app is trying the original MP4 file.");
+    playRecordingSource(clip.url);
   }
 }
 
@@ -428,13 +463,13 @@ async function refreshRecordingsList() {
 
       const clipMeta = document.createElement("span");
       clipMeta.className = "clip-meta";
-      clipMeta.textContent = `${formatDate(clip.modifiedAt)} - ${formatBytes(clip.sizeBytes)} - open in VLC`;
+      clipMeta.textContent = `${formatDate(clip.modifiedAt)} - ${formatBytes(clip.sizeBytes)} - HLS playback`;
 
       button.append(clipName, clipMeta);
       button.addEventListener("click", () => {
         document.querySelectorAll(".clip-button").forEach((item) => item.classList.remove("is-selected"));
         button.classList.add("is-selected");
-        openRecordingInVlc(clip);
+        playRecordingClip(clip);
       });
       recordingsList.appendChild(button);
     });

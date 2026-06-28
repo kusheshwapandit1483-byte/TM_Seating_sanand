@@ -2,26 +2,26 @@
 import json
 import os
 import signal
+import shutil
 import subprocess
 import threading
 import time
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 ROOT = Path(__file__).resolve().parent
 RECORDINGS_DIR = Path(os.environ.get("RECORDINGS_DIR", ROOT / "recordings")).resolve()
 SETTINGS_FILE = Path(os.environ.get("SETTINGS_FILE", ROOT / "settings.json")).resolve()
+HLS_CACHE_DIR = Path(os.environ.get("HLS_CACHE_DIR", RECORDINGS_DIR / ".hls")).resolve()
 RECORDING_SOURCE = os.environ.get("RECORDING_SOURCE", "rtsp://127.0.0.1:8554/pramacam")
 SEGMENT_SECONDS = int(os.environ.get("SEGMENT_SECONDS", "1800"))
 DEFAULT_RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "2"))
 MAX_RETENTION_DAYS = 2
 MIN_RETENTION_DAYS = 1
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
-VLC_BIN = os.environ.get("VLC_BIN", "vlc")
-VLC_RAISE_BIN = os.environ.get("VLC_RAISE_BIN", "wmctrl")
-VLC_RAISE_DELAY_SECONDS = float(os.environ.get("VLC_RAISE_DELAY_SECONDS", "1.2"))
+HLS_SEGMENT_SECONDS = int(os.environ.get("HLS_SEGMENT_SECONDS", "6"))
 PORT = int(os.environ.get("PORT", "8080"))
 
 recorder_process = None
@@ -108,16 +108,43 @@ def recording_status():
 def cleanup_old_recordings():
     retention_days = get_retention_days()
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+    HLS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cutoff = time.time() - (retention_days * 24 * 60 * 60)
     deleted = 0
+    active_recording_stems = set()
+
     for path in RECORDINGS_DIR.glob("*.mp4"):
         try:
             if path.stat().st_mtime < cutoff:
                 path.unlink()
+                shutil.rmtree(HLS_CACHE_DIR / path.stem, ignore_errors=True)
                 deleted += 1
+            else:
+                active_recording_stems.add(path.stem)
         except OSError:
             pass
+
+    for path in HLS_CACHE_DIR.iterdir():
+        try:
+            if path.is_dir() and path.name not in active_recording_stems:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
+
     return deleted
+
+
+def resolve_recording_path(name):
+    safe_name = Path(str(name or "")).name
+    recording_path = (RECORDINGS_DIR / safe_name).resolve()
+    if (
+        RECORDINGS_DIR not in recording_path.parents
+        or recording_path.suffix.lower() != ".mp4"
+        or not recording_path.exists()
+        or not recording_path.is_file()
+    ):
+        return None
+    return recording_path
 
 
 def start_recorder():
@@ -245,75 +272,101 @@ def list_recordings():
 
 
 
-def raise_vlc_window(recording_name):
-    if not VLC_RAISE_BIN:
-        return
-
-    time.sleep(VLC_RAISE_DELAY_SECONDS)
-    title_candidates = [recording_name, "VLC media player", "VLC"]
-    for title in title_candidates:
-        try:
-            activate_result = subprocess.run(
-                [VLC_RAISE_BIN, "-a", title],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=2,
-                check=False,
-            )
-            if activate_result.returncode == 0:
-                subprocess.run(
-                    [VLC_RAISE_BIN, "-r", title, "-b", "add,above,fullscreen"],
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    timeout=2,
-                    check=False,
-                )
-                return
-        except (OSError, subprocess.SubprocessError):
-            return
-
-
-def open_recording_in_vlc(name):
-    if not name:
-        return {"ok": False, "message": "Recording name is required"}
-
-    safe_name = Path(str(name)).name
-    recording_path = (RECORDINGS_DIR / safe_name).resolve()
-    if (
-        RECORDINGS_DIR not in recording_path.parents
-        or recording_path.suffix.lower() != ".mp4"
-        or not recording_path.exists()
-        or not recording_path.is_file()
-    ):
+def ensure_recording_hls(name):
+    recording_path = resolve_recording_path(name)
+    if not recording_path:
         return {"ok": False, "message": "Recording not found"}
 
+    HLS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    hls_dir = HLS_CACHE_DIR / recording_path.stem
+    playlist_path = hls_dir / "index.m3u8"
+    if playlist_path.exists() and playlist_path.stat().st_mtime >= recording_path.stat().st_mtime:
+        return {
+            "ok": True,
+            "message": "HLS playlist ready",
+            "playlistUrl": f"/recording-hls/{quote(recording_path.stem)}/index.m3u8",
+            "name": recording_path.name,
+        }
+
+    temp_dir = HLS_CACHE_DIR / f".{recording_path.stem}.tmp"
+    shutil.rmtree(temp_dir, ignore_errors=True)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    segment_pattern = "segment_%05d.ts"
+    temp_playlist = temp_dir / "index.m3u8"
     cmd = [
-        VLC_BIN,
-        "--started-from-file",
-        "--no-one-instance",
-        "--no-playlist-enqueue",
-        "--video-on-top",
-        "--fullscreen",
-        "--no-video-title-show",
+        FFMPEG_BIN,
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-y",
+        "-i",
         str(recording_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a?",
+        "-c",
+        "copy",
+        "-f",
+        "hls",
+        "-hls_time",
+        str(HLS_SEGMENT_SECONDS),
+        "-hls_playlist_type",
+        "vod",
+        "-hls_segment_filename",
+        segment_pattern,
+        "index.m3u8",
     ]
 
     try:
-        subprocess.Popen(
+        result = subprocess.run(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            cwd=str(ROOT),
-            start_new_session=True,
+            stderr=subprocess.PIPE,
+            cwd=str(temp_dir),
+            timeout=900,
+            check=False,
         )
-        threading.Thread(target=raise_vlc_window, args=(recording_path.name,), daemon=True).start()
     except Exception as exc:
-        return {"ok": False, "message": f"Could not open VLC: {exc}"}
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        return {"ok": False, "message": f"Could not prepare HLS playback: {exc}"}
 
-    return {"ok": True, "message": "Opened in VLC", "name": recording_path.name}
+    if result.returncode != 0 or not temp_playlist.exists():
+        error_text = result.stderr.decode("utf-8", errors="replace").strip()
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        message = error_text[-500:] if error_text else "ffmpeg could not prepare HLS playback"
+        return {"ok": False, "message": message}
+
+    shutil.rmtree(hls_dir, ignore_errors=True)
+    temp_dir.rename(hls_dir)
+    return {
+        "ok": True,
+        "message": "HLS playlist ready",
+        "playlistUrl": f"/recording-hls/{quote(recording_path.stem)}/index.m3u8",
+        "name": recording_path.name,
+    }
+
+
+def serve_hls_file(handler, path):
+    safe_path = Path(path).resolve()
+    if (
+        HLS_CACHE_DIR not in safe_path.parents
+        or safe_path.suffix.lower() not in (".m3u8", ".ts")
+        or not safe_path.exists()
+        or not safe_path.is_file()
+    ):
+        handler.send_error(HTTPStatus.NOT_FOUND, "HLS file not found")
+        return
+
+    content_type = "application/vnd.apple.mpegurl" if safe_path.suffix.lower() == ".m3u8" else "video/mp2t"
+    body = safe_path.read_bytes()
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.end_headers()
+    handler.wfile.write(body)
 
 
 def serve_recording_file(handler, path):
@@ -381,6 +434,11 @@ class CameraHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(path)
         clean_path = unquote(parsed.path)
 
+        if clean_path.startswith("/recording-hls/"):
+            name = clean_path.removeprefix("/recording-hls/")
+            safe_parts = [Path(part).name for part in Path(name).parts if part not in ("", ".", "..")]
+            return str(HLS_CACHE_DIR.joinpath(*safe_parts))
+
         if clean_path.startswith("/recordings/"):
             name = clean_path.removeprefix("/recordings/")
             safe_name = Path(name).name
@@ -410,6 +468,9 @@ class CameraHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/api/recordings":
             json_response(self, HTTPStatus.OK, {"recordings": list_recordings()})
             return
+        if parsed.path.startswith("/recording-hls/"):
+            serve_hls_file(self, self.translate_path(self.path))
+            return
         if parsed.path.startswith("/recordings/"):
             serve_recording_file(self, self.translate_path(self.path))
             return
@@ -422,9 +483,9 @@ class CameraHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if parsed.path == "/api/recordings/open-vlc":
+        if parsed.path == "/api/recordings/hls":
             payload = read_json_body(self)
-            result = open_recording_in_vlc(payload.get("name"))
+            result = ensure_recording_hls(payload.get("name"))
             status = HTTPStatus.OK if result["ok"] else HTTPStatus.BAD_REQUEST
             json_response(self, status, result)
             return
