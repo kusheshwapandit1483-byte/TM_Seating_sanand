@@ -109,13 +109,21 @@ if [[ -z "${CHROME}" ]]; then
   exit 1
 fi
 
+PROFILE_DIR="${HOME}/.config/tm-camera-chromium"
+mkdir -p "${PROFILE_DIR}"
+
 echo "$(date -Is) launching ${CHROME}"
 exec "${CHROME}" \
   --kiosk "${URL}" \
+  --user-data-dir="${PROFILE_DIR}" \
+  --password-store=basic \
+  --no-first-run \
+  --no-default-browser-check \
   --noerrdialogs \
   --disable-infobars \
   --disable-session-crashed-bubble \
   --disable-restore-session-state \
+  --disable-component-update \
   --check-for-update-interval=31536000 \
   --autoplay-policy=no-user-gesture-required
 KIOSK

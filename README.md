@@ -120,6 +120,10 @@ sudo reboot
 
 After reboot, the Pi auto-logs into `operator` and opens only the camera page. Your existing admin user remains password protected for SSH, terminal, settings, and maintenance.
 
+You do not need to manually create `operator`; the setup script creates it. If `id operator` does not show a user after setup, the setup script did not complete and should be rerun from the admin account.
+
+The kiosk Chromium uses a separate clean profile with keyring prompts disabled, so the client should not see the `Unlock Keyring` popup.
+
 If setup stopped partway or the Pi boots but does not open the kiosk page, pull the latest code and run the same setup command again. The script is safe to rerun and now installs multiple autostart methods for Raspberry Pi desktop variants.
 
 If the Pi boots and nothing opens, press `Ctrl + Alt + F2`, login as admin, and run:
