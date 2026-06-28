@@ -12,6 +12,9 @@ fi
 
 rm -f /etc/lightdm/lightdm.conf.d/90-tm-camera-kiosk.conf
 rm -f /etc/lightdm/lightdm.conf.d/99-tm-camera-kiosk.conf
+if [[ -f /etc/lightdm/lightdm.conf.tm-camera-backup ]]; then
+  cp /etc/lightdm/lightdm.conf.tm-camera-backup /etc/lightdm/lightdm.conf
+fi
 rm -f "/home/${KIOSK_USER}/.config/autostart/tm-camera-kiosk.desktop"
 rm -f "/home/${KIOSK_USER}/.config/lxsession/LXDE-pi/autostart"
 rm -f "/home/${KIOSK_USER}/.config/lxsession/LXDE/autostart"

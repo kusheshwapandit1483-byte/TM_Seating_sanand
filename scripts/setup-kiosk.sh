@@ -83,7 +83,7 @@ Wants=graphical.target lightdm.service ${SERVICE_NAME}.service
 [Service]
 Type=simple
 User=${KIOSK_USER}
-Environment=KIOSK_URL=${KIOSK_URL}
+Environment="KIOSK_URL=${KIOSK_URL}"
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/${KIOSK_USER}/.Xauthority
 ExecStartPre=/bin/sleep 12
@@ -185,7 +185,7 @@ LABWC
 chown -R "${KIOSK_USER}:${KIOSK_USER}" "/home/${KIOSK_USER}/.config"
 
 SESSION_NAME=""
-for session in LXDE-pi LXDE lightdm-xsession labwc wayfire; do
+for session in rpd-labwc labwc wayfire LXDE-pi LXDE lightdm-xsession; do
   if [[ -f "/usr/share/xsessions/${session}.desktop" || -f "/usr/share/wayland-sessions/${session}.desktop" ]]; then
     SESSION_NAME="${session}"
     break
@@ -205,6 +205,21 @@ if [[ -n "${SESSION_NAME}" ]]; then
 user-session=${SESSION_NAME}
 autologin-session=${SESSION_NAME}
 LIGHTDM
+fi
+
+if [[ -f /etc/lightdm/lightdm.conf ]]; then
+  cp -n /etc/lightdm/lightdm.conf /etc/lightdm/lightdm.conf.tm-camera-backup || true
+  sed -i \
+    -e "s/^#\?[[:space:]]*autologin-user[[:space:]]*=.*/autologin-user=${KIOSK_USER}/" \
+    -e "s/^#\?[[:space:]]*autologin-user-timeout[[:space:]]*=.*/autologin-user-timeout=0/" \
+    -e "s/^#\?[[:space:]]*autologin-guest[[:space:]]*=.*/autologin-guest=false/" \
+    /etc/lightdm/lightdm.conf
+  if [[ -n "${SESSION_NAME}" ]]; then
+    sed -i \
+      -e "s/^#\?[[:space:]]*user-session[[:space:]]*=.*/user-session=${SESSION_NAME}/" \
+      -e "s/^#\?[[:space:]]*autologin-session[[:space:]]*=.*/autologin-session=${SESSION_NAME}/" \
+      /etc/lightdm/lightdm.conf
+  fi
 fi
 
 systemctl enable lightdm.service >/dev/null 2>&1 || systemctl enable lightdm >/dev/null 2>&1 || true
