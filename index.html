@@ -22,35 +22,6 @@
           <button class="nav-item" type="button" data-view-target="recordingsView">Recordings</button>
         </nav>
 
-        <section class="camera-panel" aria-labelledby="cameraSettings">
-          <h2 id="cameraSettings">Camera Source</h2>
-          <label for="streamUrl">Preview URL</label>
-          <input
-            id="streamUrl"
-            type="url"
-            inputmode="url"
-            placeholder="http://127.0.0.1:8889/pramacam"
-          />
-          <p class="hint">
-            Use WebRTC for low-delay live preview. Recording uses the backend RTSP source separately.
-          </p>
-          <div class="control-row">
-            <button id="loadStream" class="primary-button" type="button">Load Preview</button>
-            <button id="demoStream" class="secondary-button" type="button">Demo</button>
-            <button id="clearStream" class="icon-button" type="button" title="Clear stream">x</button>
-          </div>
-        </section>
-
-        <section class="camera-panel" aria-labelledby="recordingControls">
-          <h2 id="recordingControls">Automatic Recording</h2>
-          <p id="recordingStatus" class="hint">Checking recorder status</p>
-          <label for="retentionDays">Keep recordings</label>
-          <select id="retentionDays" class="select-control">
-            <option value="1">1 day</option>
-            <option value="2">2 days</option>
-          </select>
-        </section>
-
         <section class="camera-panel count-panel" aria-labelledby="roomCountTitle">
           <div class="panel-heading-row">
             <h2 id="roomCountTitle">Room Count</h2>
@@ -75,43 +46,15 @@
       </aside>
 
       <section class="monitor">
-        <header class="top-bar">
-          <div>
-            <p class="eyebrow">Camera 01</p>
-            <h2 id="pageTitle">Live View</h2>
-          </div>
-          <div class="status-strip">
-            <span id="connectionDot" class="status-dot"></span>
-            <span id="connectionText">Waiting for stream</span>
-            <time id="clock" datetime=""></time>
-          </div>
-        </header>
-
         <section id="liveView" class="view-panel is-active">
           <section class="video-stage" aria-label="Live camera preview">
-            <video id="cameraVideo" controls playsinline muted></video>
-            <iframe id="cameraFrame" title="Camera web preview" hidden></iframe>
+            <video id="cameraVideo" controls playsinline muted hidden></video>
+            <iframe id="cameraFrame" title="Camera live preview" hidden></iframe>
             <div id="emptyState" class="empty-state">
-              <strong>No preview loaded</strong>
-              <span>Paste the browser-compatible camera preview URL and press Load Preview.</span>
+              <strong>Connecting live preview</strong>
+              <span>Waiting for the fixed camera feed.</span>
             </div>
           </section>
-
-          <footer class="action-bar">
-            <div class="action-group">
-              <button id="playPause" class="toolbar-button" type="button" title="Play or pause">Play</button>
-              <button id="muteToggle" class="toolbar-button" type="button" title="Mute or unmute">Mute</button>
-              <button id="fullscreenButton" class="toolbar-button" type="button" title="Fullscreen">Full</button>
-              <button id="speedButton" class="toolbar-button" type="button" title="Preview speed">1x</button>
-            </div>
-            <div class="action-group">
-              <button id="openRecordings" class="primary-button compact-button" type="button">Open Recordings</button>
-            </div>
-            <div class="quality-toggle" role="group" aria-label="Preview quality">
-              <button class="quality-button is-selected" type="button" data-quality="smooth">Smooth</button>
-              <button class="quality-button" type="button" data-quality="clear">Clear</button>
-            </div>
-          </footer>
         </section>
 
         <section id="recordingsView" class="view-panel recordings-view">
@@ -127,11 +70,7 @@
             <section class="recordings-panel" aria-label="Recorded clips">
               <div class="recordings-header">
                 <h3>Recorded Clips</h3>
-                <div class="action-group">
-                  <button id="backToLive" class="secondary-button compact-button" type="button">Back to Live</button>
-                  <button id="recordingSpeedButton" class="secondary-button compact-button" type="button">Speed 1x</button>
-                  <button id="refreshRecordings" class="secondary-button compact-button" type="button">Refresh</button>
-                </div>
+                <button id="refreshRecordings" class="secondary-button compact-button" type="button">Refresh</button>
               </div>
               <div id="recordingsList" class="recordings-list"></div>
             </section>

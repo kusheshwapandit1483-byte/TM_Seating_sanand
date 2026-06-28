@@ -317,7 +317,7 @@ def start_recorder():
 
         RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
         cleanup_old_recordings()
-        pattern = RECORDINGS_DIR / "pramacam_%Y-%m-%d_%H-%M-%S.mp4"
+        pattern = RECORDINGS_DIR / "data_%Y-%m-%d_%H-%M-%S.mp4"
         log_path = RECORDINGS_DIR / "recorder.log"
         recorder_log = open(log_path, "ab")
 

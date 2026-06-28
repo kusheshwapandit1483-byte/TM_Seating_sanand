@@ -56,6 +56,8 @@ Recording uses ffmpeg `-c copy`, so it does not reduce stream quality. By defaul
 recordings/
 ```
 
+New clips are named like data_YYYY-MM-DD_HH-MM-SS.mp4.
+
 Use the website only:
 
 1. Open `http://RASPBERRY_PI_IP:8080`.
