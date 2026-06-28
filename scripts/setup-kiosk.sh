@@ -6,6 +6,7 @@ KIOSK_URL="${KIOSK_URL:-http://127.0.0.1:8080}"
 APP_DIR="${APP_DIR:-$(pwd)}"
 APP_RUN_USER="${APP_RUN_USER:-${SUDO_USER:-$(id -un)}}"
 SERVICE_NAME="tm-camera-monitor"
+BROWSER_SERVICE_NAME="tm-camera-kiosk"
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "Run with sudo: sudo APP_DIR=/path/to/TM_SEATING_SANAND bash scripts/setup-kiosk.sh" >&2
@@ -73,6 +74,29 @@ SERVICE
 
 systemctl daemon-reload
 systemctl enable "${SERVICE_NAME}.service"
+cat > "/etc/systemd/system/${BROWSER_SERVICE_NAME}.service" <<BROWSERSERVICE
+[Unit]
+Description=TM Camera Kiosk Browser
+After=graphical.target lightdm.service ${SERVICE_NAME}.service
+Wants=graphical.target lightdm.service ${SERVICE_NAME}.service
+
+[Service]
+Type=simple
+User=${KIOSK_USER}
+Environment=KIOSK_URL=${KIOSK_URL}
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/${KIOSK_USER}/.Xauthority
+ExecStartPre=/bin/sleep 12
+ExecStart=/usr/local/bin/tm-camera-kiosk-start
+Restart=always
+RestartSec=8
+
+[Install]
+WantedBy=graphical.target
+BROWSERSERVICE
+
+systemctl daemon-reload
+systemctl enable "${BROWSER_SERVICE_NAME}.service"
 
 cat > /usr/local/bin/tm-camera-kiosk-start <<'KIOSK'
 #!/usr/bin/env bash
@@ -83,6 +107,10 @@ LOG_FILE="${HOME}/tm-camera-kiosk.log"
 
 exec >>"${LOG_FILE}" 2>&1
 echo "$(date -Is) starting kiosk for ${URL}"
+if pgrep -u "$(id -u)" -f "tm-camera-chromium" >/dev/null 2>&1; then
+  echo "$(date -Is) Chromium kiosk already running"
+  exit 0
+fi
 
 for _ in $(seq 1 60); do
   if curl -fsS "${URL}" >/dev/null 2>&1; then
@@ -183,6 +211,7 @@ systemctl set-default graphical.target >/dev/null 2>&1 || true
 echo
 echo "Kiosk setup complete."
 echo "App service: ${SERVICE_NAME}.service running as ${APP_RUN_USER}"
+echo "Browser service: ${BROWSER_SERVICE_NAME}.service running as ${KIOSK_USER}"
 echo "Kiosk user: ${KIOSK_USER} (no sudo, password login locked)"
 echo "Kiosk URL: ${KIOSK_URL}"
 if [[ -n "${SESSION_NAME}" ]]; then
@@ -191,6 +220,7 @@ fi
 echo
 echo "Next commands:"
 echo "  sudo systemctl start ${SERVICE_NAME}.service"
+echo "  sudo systemctl start ${BROWSER_SERVICE_NAME}.service"
 echo "  sudo systemctl restart lightdm"
 echo "  sudo reboot"
 echo

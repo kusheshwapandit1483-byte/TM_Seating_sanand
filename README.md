@@ -114,6 +114,7 @@ This setup creates a limited `operator` user with no sudo access, starts the cam
 cd /path/to/TM_SEATING_SANAND
 sudo APP_DIR=$(pwd) KIOSK_USER=operator KIOSK_URL=http://127.0.0.1:8080 bash scripts/setup-kiosk.sh
 sudo systemctl start tm-camera-monitor.service
+sudo systemctl start tm-camera-kiosk.service
 sudo systemctl restart lightdm
 sudo reboot
 ```
@@ -122,7 +123,7 @@ After reboot, the Pi auto-logs into `operator` and opens only the camera page. Y
 
 You do not need to manually create `operator`; the setup script creates it. If `id operator` does not show a user after setup, the setup script did not complete and should be rerun from the admin account.
 
-The kiosk Chromium uses a separate clean profile with keyring prompts disabled, so the client should not see the `Unlock Keyring` popup.
+The kiosk Chromium uses a separate clean profile with keyring prompts disabled, so the client should not see the `Unlock Keyring` popup. A dedicated `tm-camera-kiosk.service` also starts Chromium after boot, so kiosk startup does not depend only on desktop autostart behavior.
 
 If setup stopped partway or the Pi boots but does not open the kiosk page, pull the latest code and run the same setup command again. The script is safe to rerun and now installs multiple autostart methods for Raspberry Pi desktop variants.
 
@@ -138,6 +139,7 @@ Then rerun setup:
 ```bash
 sudo APP_DIR=$(pwd) KIOSK_USER=operator KIOSK_URL=http://127.0.0.1:8080 bash scripts/setup-kiosk.sh
 sudo systemctl start tm-camera-monitor.service
+sudo systemctl start tm-camera-kiosk.service
 sudo systemctl restart lightdm
 sudo reboot
 ```

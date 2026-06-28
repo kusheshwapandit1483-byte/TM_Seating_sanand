@@ -3,6 +3,7 @@ set -euo pipefail
 
 KIOSK_USER="${KIOSK_USER:-operator}"
 SERVICE_NAME="tm-camera-monitor"
+BROWSER_SERVICE_NAME="tm-camera-kiosk"
 KIOSK_URL="${KIOSK_URL:-http://127.0.0.1:8080}"
 
 echo "== User =="
@@ -15,6 +16,10 @@ cat /etc/lightdm/lightdm.conf.d/90-tm-camera-kiosk.conf 2>/dev/null || echo "mis
 echo
 echo "== Service status =="
 systemctl --no-pager --full status "${SERVICE_NAME}.service" || true
+
+echo
+echo "== Browser service status =="
+systemctl --no-pager --full status "${BROWSER_SERVICE_NAME}.service" || true
 
 echo
 echo "== LightDM status =="
@@ -38,3 +43,7 @@ tail -80 "/home/${KIOSK_USER}/tm-camera-kiosk.log" 2>/dev/null || echo "no kiosk
 echo
 echo "== Recent app logs =="
 journalctl -u "${SERVICE_NAME}.service" -n 80 --no-pager || true
+
+echo
+echo "== Recent kiosk browser logs =="
+journalctl -u "${BROWSER_SERVICE_NAME}.service" -n 80 --no-pager || true
