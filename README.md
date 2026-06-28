@@ -121,6 +121,16 @@ After reboot, the Pi auto-logs into `operator` and opens only the camera page. Y
 
 VLC can stay installed on the Pi for admin/manual checking. The kiosk user does not get sudo or normal desktop access.
 
+Admin access from kiosk with keyboard:
+
+1. Press `Ctrl + Alt + F2`.
+2. Login with the admin username, for example `aegixcore`.
+3. Enter the admin password.
+4. Run maintenance commands as needed.
+5. Return to the kiosk screen with `Ctrl + Alt + F7`. If that does not return, try `Ctrl + Alt + F1`.
+
+Do not give sudo access to `operator`. Admin access should always require the admin username and password.
+
 To disable kiosk mode:
 
 ```bash
