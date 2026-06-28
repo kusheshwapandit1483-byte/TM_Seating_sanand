@@ -193,13 +193,15 @@ for session in LXDE-pi LXDE lightdm-xsession labwc wayfire; do
 done
 
 install -d -m 755 /etc/lightdm/lightdm.conf.d
-cat > /etc/lightdm/lightdm.conf.d/90-tm-camera-kiosk.conf <<LIGHTDM
+rm -f /etc/lightdm/lightdm.conf.d/90-tm-camera-kiosk.conf
+cat > /etc/lightdm/lightdm.conf.d/99-tm-camera-kiosk.conf <<LIGHTDM
 [Seat:*]
 autologin-user=${KIOSK_USER}
 autologin-user-timeout=0
+autologin-guest=false
 LIGHTDM
 if [[ -n "${SESSION_NAME}" ]]; then
-  cat >> /etc/lightdm/lightdm.conf.d/90-tm-camera-kiosk.conf <<LIGHTDM
+  cat >> /etc/lightdm/lightdm.conf.d/99-tm-camera-kiosk.conf <<LIGHTDM
 user-session=${SESSION_NAME}
 autologin-session=${SESSION_NAME}
 LIGHTDM

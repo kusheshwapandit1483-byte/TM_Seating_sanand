@@ -11,7 +11,10 @@ id "${KIOSK_USER}" || true
 
 echo
 echo "== LightDM config =="
-cat /etc/lightdm/lightdm.conf.d/90-tm-camera-kiosk.conf 2>/dev/null || echo "missing /etc/lightdm/lightdm.conf.d/90-tm-camera-kiosk.conf"
+cat /etc/lightdm/lightdm.conf.d/99-tm-camera-kiosk.conf 2>/dev/null || echo "missing /etc/lightdm/lightdm.conf.d/99-tm-camera-kiosk.conf"
+echo
+echo "== All LightDM autologin settings =="
+grep -R "autologin-user\|autologin-session\|user-session" /etc/lightdm/lightdm.conf /etc/lightdm/lightdm.conf.d 2>/dev/null || true
 
 echo
 echo "== Service status =="

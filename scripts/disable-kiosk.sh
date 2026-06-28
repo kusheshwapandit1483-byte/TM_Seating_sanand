@@ -11,6 +11,7 @@ if [[ "${EUID}" -ne 0 ]]; then
 fi
 
 rm -f /etc/lightdm/lightdm.conf.d/90-tm-camera-kiosk.conf
+rm -f /etc/lightdm/lightdm.conf.d/99-tm-camera-kiosk.conf
 rm -f "/home/${KIOSK_USER}/.config/autostart/tm-camera-kiosk.desktop"
 rm -f "/home/${KIOSK_USER}/.config/lxsession/LXDE-pi/autostart"
 rm -f "/home/${KIOSK_USER}/.config/lxsession/LXDE/autostart"
