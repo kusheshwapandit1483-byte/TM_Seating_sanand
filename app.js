@@ -10,6 +10,8 @@ const recordingEmptyState = document.querySelector("#recordingEmptyState");
 const personCount = document.querySelector("#personCount");
 const entryCount = document.querySelector("#entryCount");
 const exitCount = document.querySelector("#exitCount");
+const conditionTile = document.querySelector("#conditionTile");
+const conditionStatus = document.querySelector("#conditionStatus");
 
 const previewHost = window.location.hostname || "127.0.0.1";
 const fixedPreviewUrl = `http://${previewHost}:8889/pramacam`;
@@ -27,6 +29,38 @@ function formatCount(value) {
 }
 
 
+function getCondition(data) {
+  const state = String(data.state || "").toUpperCase();
+  const occupancy = Number(data.occupancy || 0);
+  const relayClear = data.relay === true;
+
+  if (state === "FAULT") {
+    return { label: "Fault", className: "condition-fault" };
+  }
+  if (state === "STARTUP") {
+    return { label: "Restart", className: "condition-waiting" };
+  }
+  if (state === "AWAIT_START") {
+    return { label: "Await Start", className: "condition-waiting" };
+  }
+  if (state === "RUN" && occupancy > 0) {
+    return { label: "Occupied", className: "condition-occupied" };
+  }
+  if (state === "RUN" && occupancy === 0 && !relayClear) {
+    return { label: "Await Clear", className: "condition-clearing" };
+  }
+  if (state === "RUN" && occupancy === 0 && relayClear) {
+    return { label: "Clear", className: "condition-clear" };
+  }
+  return { label: state || "Waiting", className: "condition-waiting" };
+}
+
+function updateCondition(data) {
+  const condition = getCondition(data);
+  conditionStatus.textContent = condition.label;
+  conditionTile.classList.remove("condition-waiting", "condition-clear", "condition-clearing", "condition-occupied", "condition-fault");
+  conditionTile.classList.add(condition.className);
+}
 async function apiRequest(path, options = {}) {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -52,6 +86,9 @@ async function refreshEsp32Status() {
     }
     if (typeof data.total_out !== "undefined") {
       exitCount.textContent = formatCount(data.total_out);
+    }
+    if (data.state) {
+      updateCondition(data);
     }
   } catch (error) {
     // Keep the last valid count visible during short ESP32/network delays.

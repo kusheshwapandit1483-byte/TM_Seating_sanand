@@ -188,6 +188,34 @@ h1 {
   border-radius: 8px;
 }
 
+.count-tile.condition-tile {
+  grid-column: 1 / -1;
+}
+
+.condition-tile strong {
+  font-size: 28px;
+}
+
+.condition-waiting {
+  border-color: rgba(231, 184, 75, 0.55);
+}
+
+.condition-clear {
+  border-color: rgba(47, 191, 155, 0.58);
+}
+
+.condition-clearing {
+  border-color: rgba(231, 184, 75, 0.7);
+}
+
+.condition-occupied {
+  border-color: rgba(233, 111, 97, 0.72);
+}
+
+.condition-fault {
+  background: #261111;
+  border-color: rgba(233, 111, 97, 0.95);
+}
 .count-tile.primary-count {
   grid-column: 1 / -1;
   background: #10211d;
@@ -203,6 +231,7 @@ h1 {
   font-size: 30px;
   line-height: 1;
 }
+
 
 .count-tile.primary-count strong {
   font-size: 44px;
