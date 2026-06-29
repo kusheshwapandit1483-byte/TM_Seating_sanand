@@ -10,8 +10,6 @@ const recordingEmptyState = document.querySelector("#recordingEmptyState");
 const personCount = document.querySelector("#personCount");
 const entryCount = document.querySelector("#entryCount");
 const exitCount = document.querySelector("#exitCount");
-const esp32StatusBadge = document.querySelector("#esp32StatusBadge");
-const esp32StatusText = document.querySelector("#esp32StatusText");
 
 const previewHost = window.location.hostname || "127.0.0.1";
 const fixedPreviewUrl = `http://${previewHost}:8889/pramacam`;
@@ -28,12 +26,6 @@ function formatCount(value) {
   return Number.isFinite(number) ? String(number) : "--";
 }
 
-function setEsp32Status(kind, label, message) {
-  esp32StatusBadge.textContent = label;
-  esp32StatusBadge.classList.toggle("is-live", kind === "live");
-  esp32StatusBadge.classList.toggle("is-error", kind === "error");
-  esp32StatusText.textContent = message;
-}
 
 async function apiRequest(path, options = {}) {
   const response = await fetch(path, {
@@ -52,35 +44,19 @@ async function refreshEsp32Status() {
   try {
     const status = await apiRequest("/api/esp32/status");
     const data = status.data || {};
-    personCount.textContent = formatCount(data.occupancy);
-    entryCount.textContent = formatCount(data.total_in);
-    exitCount.textContent = formatCount(data.total_out);
-
-    if (status.connected && data.state) {
-      const age = Number(status.ageSeconds || 0);
-      const stale = age > 5;
-      setEsp32Status(
-        stale ? "error" : "live",
-        stale ? "Stale" : data.state,
-        stale ? "ESP32 connected, but count data is older than 5 seconds." : "Receiving final count from ESP32-S3."
-      );
-      return;
+    if (typeof data.occupancy !== "undefined") {
+      personCount.textContent = formatCount(data.occupancy);
     }
-
-    if (status.connected) {
-      setEsp32Status("live", "Connected", "Waiting for the first ESP32 count message.");
-      return;
+    if (typeof data.total_in !== "undefined") {
+      entryCount.textContent = formatCount(data.total_in);
     }
-
-    setEsp32Status("error", "Offline", status.error ? `ESP32 MQTT: ${status.error}` : "Waiting for ESP32 MQTT status.");
+    if (typeof data.total_out !== "undefined") {
+      exitCount.textContent = formatCount(data.total_out);
+    }
   } catch (error) {
-    personCount.textContent = "--";
-    entryCount.textContent = "--";
-    exitCount.textContent = "--";
-    setEsp32Status("error", "Offline", "Dashboard server is not returning ESP32 status.");
+    // Keep the last valid count visible during short ESP32/network delays.
   }
 }
-
 function cleanUrl(url) {
   return url.split("?")[0].toLowerCase();
 }
