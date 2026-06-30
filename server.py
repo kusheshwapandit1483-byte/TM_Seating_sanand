@@ -35,6 +35,7 @@ AI_DETECTION_INPUT_SIZE = int(os.environ.get("AI_DETECTION_INPUT_SIZE", "640"))
 AI_DETECTION_CONFIDENCE = float(os.environ.get("AI_DETECTION_CONFIDENCE", "0.35"))
 AI_DETECTION_IOU = float(os.environ.get("AI_DETECTION_IOU", "0.45"))
 AI_DETECTION_INTERVAL = float(os.environ.get("AI_DETECTION_INTERVAL", "0.15"))
+AI_DETECTION_HOLD_SECONDS = float(os.environ.get("AI_DETECTION_HOLD_SECONDS", "1.0"))
 
 recorder_process = None
 recorder_started_at = None
@@ -203,7 +204,7 @@ class ESP32StatusMonitor:
 
 
 class PersonDetectionMonitor:
-    def __init__(self, source, backend, model_path, input_size, confidence, iou, interval):
+    def __init__(self, source, backend, model_path, input_size, confidence, iou, interval, hold_seconds):
         self.source = source
         self.backend = backend
         self.model_path = model_path
@@ -211,6 +212,7 @@ class PersonDetectionMonitor:
         self.confidence = confidence
         self.iou = iou
         self.interval = interval
+        self.hold_seconds = hold_seconds
         self.lock = threading.Lock()
         self.running = False
         self.last_error = None
@@ -218,6 +220,9 @@ class PersonDetectionMonitor:
         self.frame_width = None
         self.frame_height = None
         self.detections = []
+        self.last_positive_detections = []
+        self.last_positive_at = None
+        self.held = False
         self.thread = threading.Thread(target=self.run, daemon=True)
 
     def start(self):
@@ -235,6 +240,8 @@ class PersonDetectionMonitor:
                 "model": self.model_path,
                 "inputSize": self.input_size,
                 "confidenceThreshold": self.confidence,
+                "holdSeconds": self.hold_seconds,
+                "held": self.held,
                 "frameWidth": self.frame_width,
                 "frameHeight": self.frame_height,
                 "updatedAt": last_update_at,
@@ -249,13 +256,24 @@ class PersonDetectionMonitor:
             self.last_error = message
 
     def set_detections(self, frame_width, frame_height, detections):
+        now = time.time()
+        visible_detections = detections
+        held = False
+        if detections:
+            self.last_positive_detections = detections
+            self.last_positive_at = now
+        elif self.last_positive_at and now - self.last_positive_at <= self.hold_seconds:
+            visible_detections = self.last_positive_detections
+            held = True
+
         with self.lock:
             self.running = True
             self.last_error = None
-            self.last_update_at = time.time()
+            self.last_update_at = now
             self.frame_width = int(frame_width) if frame_width else None
             self.frame_height = int(frame_height) if frame_height else None
-            self.detections = detections
+            self.detections = visible_detections
+            self.held = held
 
     def load_detector(self, cv2):
         if self.backend == "hog":
@@ -926,6 +944,7 @@ if __name__ == "__main__":
         AI_DETECTION_CONFIDENCE,
         AI_DETECTION_IOU,
         AI_DETECTION_INTERVAL,
+        AI_DETECTION_HOLD_SECONDS,
     )
     person_detection_monitor.start()
     maintenance = threading.Thread(target=maintenance_loop, daemon=True)

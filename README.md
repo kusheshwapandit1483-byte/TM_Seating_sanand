@@ -217,9 +217,12 @@ AI_DETECTION_INPUT_SIZE=640
 AI_DETECTION_CONFIDENCE=0.35
 AI_DETECTION_IOU=0.45
 AI_DETECTION_INTERVAL=0.15
+AI_DETECTION_HOLD_SECONDS=1.0
 ```
 
 The model must use COCO class IDs where `person` is class `0`. The backend filters every output so only `person` detections are sent to the website.
+
+If boxes flicker because the model misses a frame, increase `AI_DETECTION_HOLD_SECONDS` to keep the last person box visible briefly. If people are detected only when very close or centered, lower `AI_DETECTION_CONFIDENCE` to `0.25` or `0.20`.
 
 For quick CPU-only testing without an ONNX file, OpenCV's HOG person detector can be used, but it is slower and less accurate:
 
