@@ -1,6 +1,8 @@
 const video = document.querySelector("#cameraVideo");
 const frame = document.querySelector("#cameraFrame");
 const emptyState = document.querySelector("#emptyState");
+const detectionOverlay = document.querySelector("#detectionOverlay");
+const detectionStatus = document.querySelector("#detectionStatus");
 const navButtons = document.querySelectorAll("[data-view-target]");
 const viewPanels = document.querySelectorAll(".view-panel");
 const refreshRecordings = document.querySelector("#refreshRecordings");
@@ -22,10 +24,99 @@ let activeView = "liveView";
 let recordingFallbackClip = null;
 let recordingFallbackTried = false;
 let recordingFallbackInProgress = false;
+let latestDetectionPayload = null;
 
 function formatCount(value) {
   const number = Number(value);
   return Number.isFinite(number) ? String(number) : "--";
+}
+
+function resizeDetectionOverlay() {
+  const rect = detectionOverlay.getBoundingClientRect();
+  const pixelRatio = window.devicePixelRatio || 1;
+  const width = Math.max(1, Math.round(rect.width * pixelRatio));
+  const height = Math.max(1, Math.round(rect.height * pixelRatio));
+
+  if (detectionOverlay.width !== width || detectionOverlay.height !== height) {
+    detectionOverlay.width = width;
+    detectionOverlay.height = height;
+  }
+}
+
+function setDetectionStatus(payload) {
+  if (!payload || !payload.enabled) {
+    detectionStatus.textContent = "AI off";
+    detectionStatus.className = "detection-status is-waiting";
+    return;
+  }
+
+  if (payload.error) {
+    detectionStatus.textContent = "AI waiting";
+    detectionStatus.className = "detection-status is-waiting";
+    return;
+  }
+
+  const count = Array.isArray(payload.detections) ? payload.detections.length : 0;
+  detectionStatus.textContent = count === 1 ? "1 person" : `${count} persons`;
+  detectionStatus.className = count > 0 ? "detection-status is-detecting" : "detection-status is-clear";
+}
+
+function renderDetectionOverlay() {
+  resizeDetectionOverlay();
+  const context = detectionOverlay.getContext("2d");
+  const pixelRatio = window.devicePixelRatio || 1;
+  const canvasWidth = detectionOverlay.width;
+  const canvasHeight = detectionOverlay.height;
+  context.clearRect(0, 0, canvasWidth, canvasHeight);
+
+  const detections = latestDetectionPayload?.detections || [];
+  if (!detections.length) {
+    return;
+  }
+
+  context.save();
+  context.scale(pixelRatio, pixelRatio);
+  const rect = detectionOverlay.getBoundingClientRect();
+  context.lineWidth = 3;
+  context.font = "700 14px Inter, system-ui, sans-serif";
+  context.textBaseline = "top";
+
+  detections.forEach((detection) => {
+    if (detection.class !== "person") {
+      return;
+    }
+
+    const x = detection.xNorm * rect.width;
+    const y = detection.yNorm * rect.height;
+    const width = detection.widthNorm * rect.width;
+    const height = detection.heightNorm * rect.height;
+    const label = `Person ${Math.round((detection.confidence || 0) * 100)}%`;
+    const labelWidth = context.measureText(label).width + 14;
+    const labelY = Math.max(0, y - 28);
+
+    context.strokeStyle = "#2fbf9b";
+    context.fillStyle = "rgba(47, 191, 155, 0.12)";
+    context.strokeRect(x, y, width, height);
+    context.fillRect(x, y, width, height);
+    context.fillStyle = "#2fbf9b";
+    context.fillRect(x, labelY, labelWidth, 24);
+    context.fillStyle = "#061410";
+    context.fillText(label, x + 7, labelY + 5);
+  });
+  context.restore();
+}
+
+async function refreshDetections() {
+  try {
+    latestDetectionPayload = await apiRequest("/api/detections/latest");
+    setDetectionStatus(latestDetectionPayload);
+    renderDetectionOverlay();
+  } catch (error) {
+    latestDetectionPayload = null;
+    detectionStatus.textContent = "AI offline";
+    detectionStatus.className = "detection-status is-waiting";
+    renderDetectionOverlay();
+  }
 }
 
 
@@ -349,11 +440,14 @@ frame.addEventListener("load", () => showEmptyState(false));
 frame.addEventListener("error", () => showEmptyState(true));
 video.addEventListener("playing", () => showEmptyState(false));
 video.addEventListener("error", () => showEmptyState(true));
+window.addEventListener("resize", renderDetectionOverlay);
 
 recordingEmptyState.classList.remove("is-hidden");
 loadFixedPreview();
 refreshEsp32Status();
+refreshDetections();
 setInterval(refreshEsp32Status, 1000);
+setInterval(refreshDetections, 500);
 setInterval(() => {
   if (activeView === "recordingsView") {
     refreshRecordingsList();

@@ -184,3 +184,72 @@ sudo reboot
 ```
 
 More notes are in `scripts/disable-kiosk.md`.
+## Live AI person detection
+
+The dashboard has a live detection overlay for the `person` class. The browser only draws the boxes; the Radxa/Raspberry Pi backend reads the same RTSP camera source and runs AI beside the recorder.
+
+Default detection source:
+
+```text
+rtsp://127.0.0.1:8554/pramacam
+```
+
+Start with detection disabled for normal recording-only operation:
+
+```bash
+python3 server.py
+```
+
+Enable person detection with an OpenCV-compatible ONNX model:
+
+```bash
+AI_DETECTION_ENABLED=1 \
+AI_DETECTION_BACKEND=opencv-onnx \
+AI_DETECTION_MODEL=/path/to/yolov8n.onnx \
+python3 server.py
+```
+
+Useful optional settings:
+
+```bash
+AI_DETECTION_SOURCE=rtsp://127.0.0.1:8554/pramacam
+AI_DETECTION_INPUT_SIZE=640
+AI_DETECTION_CONFIDENCE=0.35
+AI_DETECTION_IOU=0.45
+AI_DETECTION_INTERVAL=0.15
+```
+
+The model must use COCO class IDs where `person` is class `0`. The backend filters every output so only `person` detections are sent to the website.
+
+For quick CPU-only testing without an ONNX file, OpenCV's HOG person detector can be used, but it is slower and less accurate:
+
+```bash
+AI_DETECTION_ENABLED=1 AI_DETECTION_BACKEND=hog python3 server.py
+```
+
+The website polls this endpoint every 500 ms:
+
+```text
+/api/detections/latest
+```
+
+Example response:
+
+```json
+{
+  "enabled": true,
+  "running": true,
+  "detections": [
+    {
+      "class": "person",
+      "confidence": 0.91,
+      "xNorm": 0.21,
+      "yNorm": 0.12,
+      "widthNorm": 0.28,
+      "heightNorm": 0.62
+    }
+  ]
+}
+```
+
+For the final Radxa A7A build, keep the same `/api/detections/latest` response format and replace only the internals of `PersonDetectionMonitor` with the board-supported NPU runtime. That lets the website and dashboard stay unchanged while inference moves from OpenCV CPU to the A7A AI accelerator.

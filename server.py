@@ -27,6 +27,14 @@ PORT = int(os.environ.get("PORT", "8080"))
 ESP32_MQTT_HOST = os.environ.get("ESP32_MQTT_HOST", "192.168.10.1")
 ESP32_MQTT_PORT = int(os.environ.get("ESP32_MQTT_PORT", "1883"))
 ESP32_MQTT_TOPIC = os.environ.get("ESP32_MQTT_TOPIC", "eagle/system/status")
+AI_DETECTION_ENABLED = os.environ.get("AI_DETECTION_ENABLED", "0").lower() in ("1", "true", "yes", "on")
+AI_DETECTION_BACKEND = os.environ.get("AI_DETECTION_BACKEND", "opencv-onnx")
+AI_DETECTION_SOURCE = os.environ.get("AI_DETECTION_SOURCE", RECORDING_SOURCE)
+AI_DETECTION_MODEL = os.environ.get("AI_DETECTION_MODEL", "")
+AI_DETECTION_INPUT_SIZE = int(os.environ.get("AI_DETECTION_INPUT_SIZE", "640"))
+AI_DETECTION_CONFIDENCE = float(os.environ.get("AI_DETECTION_CONFIDENCE", "0.35"))
+AI_DETECTION_IOU = float(os.environ.get("AI_DETECTION_IOU", "0.45"))
+AI_DETECTION_INTERVAL = float(os.environ.get("AI_DETECTION_INTERVAL", "0.15"))
 
 recorder_process = None
 recorder_started_at = None
@@ -34,6 +42,7 @@ recorder_log = None
 recorder_lock = threading.Lock()
 shutdown_event = threading.Event()
 esp32_monitor = None
+person_detection_monitor = None
 
 
 def mqtt_remaining_length(length):
@@ -192,6 +201,209 @@ class ESP32StatusMonitor:
                 shutdown_event.wait(5)
 
 
+
+class PersonDetectionMonitor:
+    def __init__(self, source, backend, model_path, input_size, confidence, iou, interval):
+        self.source = source
+        self.backend = backend
+        self.model_path = model_path
+        self.input_size = input_size
+        self.confidence = confidence
+        self.iou = iou
+        self.interval = interval
+        self.lock = threading.Lock()
+        self.running = False
+        self.last_error = None
+        self.last_update_at = None
+        self.frame_width = None
+        self.frame_height = None
+        self.detections = []
+        self.thread = threading.Thread(target=self.run, daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def snapshot(self):
+        with self.lock:
+            last_update_at = self.last_update_at
+            age_seconds = time.time() - last_update_at if last_update_at else None
+            return {
+                "enabled": AI_DETECTION_ENABLED,
+                "running": self.running,
+                "backend": self.backend,
+                "source": self.source,
+                "model": self.model_path,
+                "inputSize": self.input_size,
+                "confidenceThreshold": self.confidence,
+                "frameWidth": self.frame_width,
+                "frameHeight": self.frame_height,
+                "updatedAt": last_update_at,
+                "ageSeconds": age_seconds,
+                "error": self.last_error,
+                "detections": list(self.detections),
+            }
+
+    def set_error(self, message):
+        with self.lock:
+            self.running = False
+            self.last_error = message
+
+    def set_detections(self, frame_width, frame_height, detections):
+        with self.lock:
+            self.running = True
+            self.last_error = None
+            self.last_update_at = time.time()
+            self.frame_width = int(frame_width) if frame_width else None
+            self.frame_height = int(frame_height) if frame_height else None
+            self.detections = detections
+
+    def load_detector(self, cv2):
+        if self.backend == "hog":
+            hog = cv2.HOGDescriptor()
+            hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+            return hog
+        if self.backend != "opencv-onnx":
+            raise ValueError(f"Unsupported AI_DETECTION_BACKEND: {self.backend}")
+        if not self.model_path:
+            raise ValueError("Set AI_DETECTION_MODEL to a person-capable ONNX model path")
+        model = Path(self.model_path).expanduser()
+        if not model.exists():
+            raise FileNotFoundError(f"AI model not found: {model}")
+        return cv2.dnn.readNetFromONNX(str(model))
+
+    def detect_hog(self, cv2, detector, frame):
+        height, width = frame.shape[:2]
+        boxes, weights = detector.detectMultiScale(frame, winStride=(8, 8), padding=(16, 16), scale=1.05)
+        detections = []
+        for box, confidence in zip(boxes, weights):
+            confidence = float(confidence)
+            if confidence < self.confidence:
+                continue
+            x, y, w, h = [int(value) for value in box]
+            detections.append(self.make_detection(x, y, w, h, confidence, width, height))
+        return detections
+
+    def detect_onnx(self, cv2, detector, frame):
+        height, width = frame.shape[:2]
+        blob = cv2.dnn.blobFromImage(
+            frame,
+            1 / 255.0,
+            (self.input_size, self.input_size),
+            swapRB=True,
+            crop=False,
+        )
+        detector.setInput(blob)
+        output_names = detector.getUnconnectedOutLayersNames()
+        outputs = detector.forward(output_names)
+        rows = outputs[0]
+        while len(rows.shape) > 2:
+            rows = rows[0]
+        if rows.shape[0] in (84, 85) and rows.shape[1] > rows.shape[0]:
+            rows = rows.transpose()
+
+        x_scale = width / float(self.input_size)
+        y_scale = height / float(self.input_size)
+        boxes = []
+        scores = []
+        for row in rows:
+            parsed = self.parse_yolo_person_row(row, x_scale, y_scale)
+            if not parsed:
+                continue
+            x, y, w, h, confidence = parsed
+            boxes.append([int(x), int(y), int(w), int(h)])
+            scores.append(float(confidence))
+
+        indexes = cv2.dnn.NMSBoxes(boxes, scores, self.confidence, self.iou)
+        if len(indexes) == 0:
+            return []
+        detections = []
+        for index in indexes.flatten():
+            x, y, w, h = boxes[int(index)]
+            detections.append(self.make_detection(x, y, w, h, scores[int(index)], width, height))
+        return detections
+
+    def parse_yolo_person_row(self, row, x_scale, y_scale):
+        values = row.tolist()
+        if len(values) == 6:
+            class_id = int(values[5])
+            confidence = float(values[4])
+            if class_id != 0 or confidence < self.confidence:
+                return None
+            x1, y1, x2, y2 = values[:4]
+            return x1 * x_scale, y1 * y_scale, (x2 - x1) * x_scale, (y2 - y1) * y_scale, confidence
+
+        if len(values) >= 85:
+            confidence = float(values[4]) * float(values[5])
+        elif len(values) >= 84:
+            confidence = float(values[4])
+        else:
+            return None
+
+        if confidence < self.confidence:
+            return None
+        cx, cy, w, h = [float(value) for value in values[:4]]
+        x = (cx - w / 2) * x_scale
+        y = (cy - h / 2) * y_scale
+        return x, y, w * x_scale, h * y_scale, confidence
+
+    def make_detection(self, x, y, width, height, confidence, frame_width, frame_height):
+        x = max(0, min(int(x), frame_width - 1))
+        y = max(0, min(int(y), frame_height - 1))
+        width = max(1, min(int(width), frame_width - x))
+        height = max(1, min(int(height), frame_height - y))
+        return {
+            "class": "person",
+            "confidence": round(float(confidence), 4),
+            "x": x,
+            "y": y,
+            "width": width,
+            "height": height,
+            "xNorm": x / frame_width,
+            "yNorm": y / frame_height,
+            "widthNorm": width / frame_width,
+            "heightNorm": height / frame_height,
+        }
+
+    def run(self):
+        if not AI_DETECTION_ENABLED:
+            self.set_error("AI detection disabled. Start with AI_DETECTION_ENABLED=1 to enable person detection.")
+            return
+        try:
+            import cv2
+        except Exception as exc:
+            self.set_error(f"OpenCV import failed: {exc}")
+            return
+
+        try:
+            detector = self.load_detector(cv2)
+        except Exception as exc:
+            self.set_error(str(exc))
+            return
+
+        while not shutdown_event.is_set():
+            capture = cv2.VideoCapture(self.source)
+            if not capture.isOpened():
+                self.set_error(f"Could not open detection source: {self.source}")
+                shutdown_event.wait(3)
+                continue
+            try:
+                while not shutdown_event.is_set():
+                    ok, frame = capture.read()
+                    if not ok or frame is None:
+                        self.set_error("Detection source frame read failed")
+                        break
+                    if self.backend == "hog":
+                        detections = self.detect_hog(cv2, detector, frame)
+                    else:
+                        detections = self.detect_onnx(cv2, detector, frame)
+                    height, width = frame.shape[:2]
+                    self.set_detections(width, height, detections)
+                    shutdown_event.wait(self.interval)
+            except Exception as exc:
+                self.set_error(f"Detection failed: {exc}")
+                shutdown_event.wait(2)
+            finally:
+                capture.release()
 def clamp_retention_days(value):
     try:
         days = int(value)
@@ -634,6 +846,15 @@ class CameraHandler(SimpleHTTPRequestHandler):
             payload = esp32_monitor.snapshot() if esp32_monitor else {"connected": False, "error": "monitor not started", "data": {}}
             json_response(self, HTTPStatus.OK, payload)
             return
+        if parsed.path == "/api/detections/latest":
+            payload = person_detection_monitor.snapshot() if person_detection_monitor else {
+                "enabled": False,
+                "running": False,
+                "error": "person detection monitor not started",
+                "detections": [],
+            }
+            json_response(self, HTTPStatus.OK, payload)
+            return
         if parsed.path == "/api/recording/status":
             ensure_recorder_running()
             json_response(self, HTTPStatus.OK, recording_status())
@@ -697,12 +918,23 @@ if __name__ == "__main__":
     print(start_result["message"])
     esp32_monitor = ESP32StatusMonitor(ESP32_MQTT_HOST, ESP32_MQTT_PORT, ESP32_MQTT_TOPIC)
     esp32_monitor.start()
+    person_detection_monitor = PersonDetectionMonitor(
+        AI_DETECTION_SOURCE,
+        AI_DETECTION_BACKEND,
+        AI_DETECTION_MODEL,
+        AI_DETECTION_INPUT_SIZE,
+        AI_DETECTION_CONFIDENCE,
+        AI_DETECTION_IOU,
+        AI_DETECTION_INTERVAL,
+    )
+    person_detection_monitor.start()
     maintenance = threading.Thread(target=maintenance_loop, daemon=True)
     maintenance.start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), CameraHandler)
     print(f"Camera Monitor running at http://0.0.0.0:{PORT}")
     print(f"Recording source: {RECORDING_SOURCE}")
     print(f"ESP32 MQTT: {ESP32_MQTT_HOST}:{ESP32_MQTT_PORT} topic {ESP32_MQTT_TOPIC}")
+    print(f"AI detection: {AI_DETECTION_BACKEND} enabled={AI_DETECTION_ENABLED} source={AI_DETECTION_SOURCE}")
     print(f"Recordings folder: {RECORDINGS_DIR}")
     print(f"Retention: {get_retention_days()} day(s), maximum {MAX_RETENTION_DAYS} day(s)")
     server.serve_forever()
