@@ -301,10 +301,34 @@ class PersonDetectionMonitor:
             detections.append(self.make_detection(x, y, w, h, confidence, width, height))
         return detections
 
+    def letterbox_frame(self, cv2, frame):
+        height, width = frame.shape[:2]
+        scale = min(self.input_size / width, self.input_size / height)
+        resized_width = int(round(width * scale))
+        resized_height = int(round(height * scale))
+        pad_width = self.input_size - resized_width
+        pad_height = self.input_size - resized_height
+        pad_left = pad_width // 2
+        pad_right = pad_width - pad_left
+        pad_top = pad_height // 2
+        pad_bottom = pad_height - pad_top
+        resized = cv2.resize(frame, (resized_width, resized_height), interpolation=cv2.INTER_LINEAR)
+        canvas = cv2.copyMakeBorder(
+            resized,
+            pad_top,
+            pad_bottom,
+            pad_left,
+            pad_right,
+            cv2.BORDER_CONSTANT,
+            value=(114, 114, 114),
+        )
+        return canvas, scale, pad_left, pad_top
+
     def detect_onnx(self, cv2, detector, frame):
         height, width = frame.shape[:2]
+        input_frame, scale, pad_x, pad_y = self.letterbox_frame(cv2, frame)
         blob = cv2.dnn.blobFromImage(
-            frame,
+            input_frame,
             1 / 255.0,
             (self.input_size, self.input_size),
             swapRB=True,
@@ -319,12 +343,10 @@ class PersonDetectionMonitor:
         if rows.shape[0] in (84, 85) and rows.shape[1] > rows.shape[0]:
             rows = rows.transpose()
 
-        x_scale = width / float(self.input_size)
-        y_scale = height / float(self.input_size)
         boxes = []
         scores = []
         for row in rows:
-            parsed = self.parse_yolo_person_row(row, x_scale, y_scale)
+            parsed = self.parse_yolo_person_row(row, scale, pad_x, pad_y)
             if not parsed:
                 continue
             x, y, w, h, confidence = parsed
@@ -340,7 +362,15 @@ class PersonDetectionMonitor:
             detections.append(self.make_detection(x, y, w, h, scores[int(index)], width, height))
         return detections
 
-    def parse_yolo_person_row(self, row, x_scale, y_scale):
+    def scale_yolo_box(self, x, y, width, height, scale, pad_x, pad_y):
+        return (
+            (x - pad_x) / scale,
+            (y - pad_y) / scale,
+            width / scale,
+            height / scale,
+        )
+
+    def parse_yolo_person_row(self, row, scale, pad_x, pad_y):
         values = row.tolist()
         if len(values) == 6:
             class_id = int(values[5])
@@ -348,7 +378,7 @@ class PersonDetectionMonitor:
             if class_id != 0 or confidence < self.confidence:
                 return None
             x1, y1, x2, y2 = values[:4]
-            return x1 * x_scale, y1 * y_scale, (x2 - x1) * x_scale, (y2 - y1) * y_scale, confidence
+            return (*self.scale_yolo_box(x1, y1, x2 - x1, y2 - y1, scale, pad_x, pad_y), confidence)
 
         if len(values) >= 85:
             confidence = float(values[4]) * float(values[5])
@@ -360,9 +390,9 @@ class PersonDetectionMonitor:
         if confidence < self.confidence:
             return None
         cx, cy, w, h = [float(value) for value in values[:4]]
-        x = (cx - w / 2) * x_scale
-        y = (cy - h / 2) * y_scale
-        return x, y, w * x_scale, h * y_scale, confidence
+        x = cx - w / 2
+        y = cy - h / 2
+        return (*self.scale_yolo_box(x, y, w, h, scale, pad_x, pad_y), confidence)
 
     def make_detection(self, x, y, width, height, confidence, frame_width, frame_height):
         x = max(0, min(int(x), frame_width - 1))

@@ -224,6 +224,22 @@ The model must use COCO class IDs where `person` is class `0`. The backend filte
 
 If boxes flicker because the model misses a frame, increase `AI_DETECTION_HOLD_SECONDS` to keep the last person box visible briefly. If people are detected only when very close or centered, lower `AI_DETECTION_CONFIDENCE` to `0.25` or `0.20`.
 
+For high CCTV angles or cluttered rooms, `yolov8n` may miss standing people. Try a larger input size first:
+
+```bash
+yolo export model=yolov8n.pt format=onnx imgsz=960
+```
+
+Then run with:
+
+```bash
+AI_DETECTION_INPUT_SIZE=960
+AI_DETECTION_CONFIDENCE=0.20
+AI_DETECTION_HOLD_SECONDS=2.0
+```
+
+If the Radxa can handle the extra CPU load, `yolov8s.onnx` is more reliable than `yolov8n.onnx` for this camera angle.
+
 For quick CPU-only testing without an ONNX file, OpenCV's HOG person detector can be used, but it is slower and less accurate:
 
 ```bash
