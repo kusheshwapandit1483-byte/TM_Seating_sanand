@@ -1,5 +1,6 @@
 const video = document.querySelector("#cameraVideo");
 const frame = document.querySelector("#cameraFrame");
+const image = document.querySelector("#cameraImage");
 const emptyState = document.querySelector("#emptyState");
 const detectionOverlay = document.querySelector("#detectionOverlay");
 const detectionStatus = document.querySelector("#detectionStatus");
@@ -16,7 +17,11 @@ const conditionTile = document.querySelector("#conditionTile");
 const conditionStatus = document.querySelector("#conditionStatus");
 
 const previewHost = window.location.hostname || "127.0.0.1";
-const fixedPreviewUrl = `http://${previewHost}:8889/pramacam`;
+const liveMode = (new URLSearchParams(window.location.search).get("live") || "webrtc").toLowerCase();
+const webrtcPreviewUrl = `http://${previewHost}:8889/pramacam`;
+const hlsPreviewUrl = `http://${previewHost}:8888/pramacam/index.m3u8`;
+const mjpegPreviewUrl = "/live.mjpg";
+const fixedPreviewUrl = liveMode === "hls" ? hlsPreviewUrl : liveMode === "mjpeg" ? mjpegPreviewUrl : webrtcPreviewUrl;
 const directVideoExtensions = [".mp4", ".webm", ".ogg", ".mov"];
 let hlsPlayer = null;
 let recordingHlsPlayer = null;
@@ -197,6 +202,11 @@ function isDirectVideoUrl(url) {
   return directVideoExtensions.some((extension) => cleanUrl(url).endsWith(extension));
 }
 
+function isMjpegUrl(url) {
+  const clean = cleanUrl(url);
+  return clean.endsWith(".mjpg") || clean.endsWith(".mjpeg");
+}
+
 function showEmptyState(show) {
   emptyState.classList.toggle("is-hidden", !show);
 }
@@ -210,6 +220,8 @@ function destroyHls() {
 
 function loadHls(url) {
   destroyHls();
+  image.hidden = true;
+  image.removeAttribute("src");
   frame.hidden = true;
   video.hidden = false;
 
@@ -231,6 +243,8 @@ function loadHls(url) {
 
 function loadDirectVideo(url) {
   destroyHls();
+  image.hidden = true;
+  image.removeAttribute("src");
   frame.hidden = true;
   video.hidden = false;
   video.src = url;
@@ -240,6 +254,8 @@ function loadDirectVideo(url) {
 
 function loadPreviewPage(url) {
   destroyHls();
+  image.hidden = true;
+  image.removeAttribute("src");
   video.pause();
   video.removeAttribute("src");
   video.load();
@@ -249,8 +265,25 @@ function loadPreviewPage(url) {
   showEmptyState(false);
 }
 
+function loadMjpeg(url) {
+  destroyHls();
+  frame.hidden = true;
+  frame.removeAttribute("src");
+  video.pause();
+  video.removeAttribute("src");
+  video.load();
+  video.hidden = true;
+  image.hidden = false;
+  image.src = `${url}?t=${Date.now()}`;
+  showEmptyState(false);
+}
+
 function loadFixedPreview() {
   showEmptyState(false);
+  if (isMjpegUrl(fixedPreviewUrl)) {
+    loadMjpeg(fixedPreviewUrl);
+    return;
+  }
   if (isHlsUrl(fixedPreviewUrl)) {
     loadHls(fixedPreviewUrl);
     return;
@@ -438,6 +471,8 @@ recordingPlayer.addEventListener("error", prepareRecordingHlsFallback);
 
 frame.addEventListener("load", () => showEmptyState(false));
 frame.addEventListener("error", () => showEmptyState(true));
+image.addEventListener("load", () => showEmptyState(false));
+image.addEventListener("error", () => showEmptyState(true));
 video.addEventListener("playing", () => showEmptyState(false));
 video.addEventListener("error", () => showEmptyState(true));
 window.addEventListener("resize", renderDetectionOverlay);

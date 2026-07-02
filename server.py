@@ -22,6 +22,9 @@ DEFAULT_RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "2"))
 MAX_RETENTION_DAYS = 2
 MIN_RETENTION_DAYS = 1
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
+LIVE_PREVIEW_FPS = os.environ.get("LIVE_PREVIEW_FPS", "8")
+LIVE_PREVIEW_HEIGHT = os.environ.get("LIVE_PREVIEW_HEIGHT", "720")
+LIVE_PREVIEW_QUALITY = os.environ.get("LIVE_PREVIEW_QUALITY", "6")
 HLS_SEGMENT_SECONDS = int(os.environ.get("HLS_SEGMENT_SECONDS", "6"))
 PORT = int(os.environ.get("PORT", "8080"))
 ESP32_MQTT_HOST = os.environ.get("ESP32_MQTT_HOST", "192.168.10.1")
@@ -693,6 +696,79 @@ def list_recordings():
 
 
 
+def stream_live_mjpeg(handler):
+    cmd = [
+        FFMPEG_BIN,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-rtsp_transport",
+        "tcp",
+        "-i",
+        RECORDING_SOURCE,
+        "-an",
+        "-vf",
+        f"fps={LIVE_PREVIEW_FPS},scale=-2:{LIVE_PREVIEW_HEIGHT}",
+        "-q:v",
+        LIVE_PREVIEW_QUALITY,
+        "-f",
+        "mjpeg",
+        "pipe:1",
+    ]
+
+    try:
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            cwd=str(ROOT),
+        )
+    except Exception as exc:
+        handler.send_error(HTTPStatus.SERVICE_UNAVAILABLE, f"Could not start live preview: {exc}")
+        return
+
+    handler.send_response(HTTPStatus.OK)
+    handler.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+    handler.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+    handler.send_header("Pragma", "no-cache")
+    handler.end_headers()
+
+    buffer = bytearray()
+    try:
+        while not shutdown_event.is_set():
+            chunk = process.stdout.read(8192) if process.stdout else b""
+            if not chunk:
+                break
+            buffer.extend(chunk)
+            while True:
+                start = buffer.find(b"\xff\xd8")
+                if start < 0:
+                    if len(buffer) > 1:
+                        del buffer[:-1]
+                    break
+                end = buffer.find(b"\xff\xd9", start + 2)
+                if end < 0:
+                    if start > 0:
+                        del buffer[:start]
+                    break
+                frame_bytes = bytes(buffer[start:end + 2])
+                del buffer[:end + 2]
+                handler.wfile.write(b"--frame\r\n")
+                handler.wfile.write(b"Content-Type: image/jpeg\r\n")
+                handler.wfile.write(f"Content-Length: {len(frame_bytes)}\r\n\r\n".encode("ascii"))
+                handler.wfile.write(frame_bytes)
+                handler.wfile.write(b"\r\n")
+                handler.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError):
+        pass
+    finally:
+        process.terminate()
+        try:
+            process.wait(timeout=3)
+        except Exception:
+            process.kill()
+
 def ensure_recording_hls(name):
     recording_path = resolve_recording_path(name)
     if not recording_path:
@@ -909,6 +985,9 @@ class CameraHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/recordings":
             json_response(self, HTTPStatus.OK, {"recordings": list_recordings()})
+            return
+        if parsed.path == "/live.mjpg":
+            stream_live_mjpeg(self)
             return
         if parsed.path.startswith("/recording-hls/"):
             serve_hls_file(self, self.translate_path(self.path))
