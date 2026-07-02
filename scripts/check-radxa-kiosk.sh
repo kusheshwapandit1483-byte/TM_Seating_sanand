@@ -33,6 +33,31 @@ curl -I --max-time 5 "${KIOSK_URL}" || true
 curl -I --max-time 5 "http://127.0.0.1:8889/pramacam" || true
 
 echo
+echo "== Service unit files =="
+ls -l "/etc/systemd/system/${MEDIAMTX_SERVICE_NAME}.service" "/etc/systemd/system/${APP_SERVICE_NAME}.service" "/etc/systemd/system/${BROWSER_SERVICE_NAME}.service" 2>/dev/null || true
+systemctl cat "${MEDIAMTX_SERVICE_NAME}.service" 2>/dev/null || true
+systemctl cat "${APP_SERVICE_NAME}.service" 2>/dev/null || true
+systemctl cat "${BROWSER_SERVICE_NAME}.service" 2>/dev/null || true
+
+echo
+echo "== MediaMTX folders in project =="
+APP_DIR="${APP_DIR:-$(pwd)}"
+find "${APP_DIR}" -maxdepth 1 -type d -name "mediamtx_v*_linux_arm64v8" -print 2>/dev/null || true
+
+echo
+echo "== MediaMTX and app processes =="
+pgrep -a mediamtx || true
+pgrep -a -f "server.py|tm-camera-chromium|chromium.*8080" || true
+
+echo
+echo "== Listening ports =="
+if command -v ss >/dev/null 2>&1; then
+  ss -lntup 2>/dev/null | grep -E '(:8554|:8888|:8889|:8000|:8001|:8080)' || true
+else
+  netstat -lntup 2>/dev/null | grep -E '(:8554|:8888|:8889|:8000|:8001|:8080)' || true
+fi
+
+echo
 echo "== Recent MediaMTX logs =="
 journalctl -u "${MEDIAMTX_SERVICE_NAME}.service" -n 80 --no-pager || true
 

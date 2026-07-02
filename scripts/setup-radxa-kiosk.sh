@@ -42,6 +42,12 @@ if [[ ! -f "${MEDIAMTX_CONFIG}" ]]; then
   exit 1
 fi
 
+MEDIAMTX_EXEC="${MEDIAMTX_DIR}/mediamtx"
+MEDIAMTX_ARGS=""
+if [[ "$(readlink -f "${MEDIAMTX_CONFIG}")" != "$(readlink -f "${MEDIAMTX_DIR}/mediamtx.yml")" ]]; then
+  MEDIAMTX_ARGS=" ${MEDIAMTX_CONFIG}"
+fi
+
 if ! id "${APP_RUN_USER}" >/dev/null 2>&1; then
   echo "APP_RUN_USER=${APP_RUN_USER} does not exist" >&2
   exit 1
@@ -93,9 +99,10 @@ Wants=network-online.target
 Type=simple
 User=${APP_RUN_USER}
 WorkingDirectory=${MEDIAMTX_DIR}
-ExecStart=${MEDIAMTX_DIR}/mediamtx ${MEDIAMTX_CONFIG}
+ExecStart=${MEDIAMTX_EXEC}${MEDIAMTX_ARGS}
 Restart=always
 RestartSec=5
+LimitNOFILE=1048576
 
 [Install]
 WantedBy=multi-user.target
@@ -112,6 +119,8 @@ Type=simple
 User=${APP_RUN_USER}
 WorkingDirectory=${APP_DIR}
 Environment=PYTHONUNBUFFERED=1
+Environment=RECORDING_SOURCE=rtsp://127.0.0.1:8554/pramacam
+ExecStartPre=/bin/sleep 3
 ExecStart=/usr/bin/python3 ${APP_DIR}/server.py
 Restart=always
 RestartSec=5
