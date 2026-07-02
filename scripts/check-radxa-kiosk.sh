@@ -16,6 +16,19 @@ echo "== LightDM config =="
 cat /etc/lightdm/lightdm.conf.d/99-tm-camera-kiosk.conf 2>/dev/null || echo "missing /etc/lightdm/lightdm.conf.d/99-tm-camera-kiosk.conf"
 
 echo
+echo "== Kiosk lock and power config =="
+cat "/home/${KIOSK_USER}/.config/kscreenlockerrc" 2>/dev/null || echo "missing kscreenlockerrc"
+cat "/home/${KIOSK_USER}/.config/powerdevilrc" 2>/dev/null || echo "missing powerdevilrc"
+cat "/home/${KIOSK_USER}/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml" 2>/dev/null || true
+cat "/home/${KIOSK_USER}/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-power-manager.xml" 2>/dev/null || true
+ls -l "/home/${KIOSK_USER}/.config/autostart"/*locker*.desktop "/home/${KIOSK_USER}/.config/autostart"/*screensaver*.desktop 2>/dev/null || true
+
+echo
+echo "== Display manager logs =="
+journalctl -u lightdm.service -n 60 --no-pager 2>/dev/null || true
+journalctl -u sddm.service -n 60 --no-pager 2>/dev/null || true
+
+echo
 echo "== Service status: MediaMTX =="
 systemctl --no-pager --full status "${MEDIAMTX_SERVICE_NAME}.service" || true
 

@@ -160,6 +160,10 @@ LOG_FILE="${HOME}/tm-camera-kiosk.log"
 exec >>"${LOG_FILE}" 2>&1
 echo "$(date -Is) starting kiosk for ${URL}"
 
+if command -v systemd-inhibit >/dev/null 2>&1 && [[ "${TM_KIOSK_INHIBITED:-0}" != "1" ]]; then
+  exec env TM_KIOSK_INHIBITED=1 KIOSK_URL="${URL}" systemd-inhibit --what=idle:sleep:handle-lid-switch --why="TM camera kiosk" --mode=block "$0"
+fi
+
 for _ in $(seq 1 90); do
   if curl -fsS "${URL}" >/dev/null 2>&1; then
     break
@@ -167,9 +171,29 @@ for _ in $(seq 1 90); do
   sleep 1
 done
 
-xset s off >/dev/null 2>&1 || true
-xset -dpms >/dev/null 2>&1 || true
-xset s noblank >/dev/null 2>&1 || true
+disable_idle() {
+  xset s off >/dev/null 2>&1 || true
+  xset -dpms >/dev/null 2>&1 || true
+  xset s noblank >/dev/null 2>&1 || true
+}
+
+kill_lockers() {
+  while read -r pid; do
+    if [[ -n "${pid}" && "${pid}" != "$$" ]]; then
+      kill "${pid}" >/dev/null 2>&1 || true
+    fi
+  done < <(pgrep -u "$(id -u)" -f 'kscreenlocker|light-locker|xfce4-screensaver|xscreensaver' 2>/dev/null || true)
+}
+
+disable_idle
+kill_lockers
+(
+  while true; do
+    disable_idle
+    kill_lockers
+    sleep 60
+  done
+) &
 unclutter -idle 0.5 -root >/dev/null 2>&1 &
 
 CHROME=""
@@ -228,6 +252,57 @@ install -d -m 755 "/home/${KIOSK_USER}/.config/labwc"
 cat > "/home/${KIOSK_USER}/.config/labwc/autostart" <<LABWC
 env KIOSK_URL=${KIOSK_URL} /usr/local/bin/tm-camera-kiosk-start &
 LABWC
+
+# Disable screen locking and idle power actions for common Radxa desktops.
+# KDE/Plasma otherwise can show a lock/login screen after a few idle minutes.
+cat > "/home/${KIOSK_USER}/.config/kscreenlockerrc" <<KSCREEN
+[Daemon]
+Autolock=false
+LockOnResume=false
+Timeout=0
+KSCREEN
+
+cat > "/home/${KIOSK_USER}/.config/powerdevilrc" <<POWERDEVIL
+[AC][SuspendAndShutdown]
+idleAction=0
+
+[Battery][SuspendAndShutdown]
+idleAction=0
+
+[LowBattery][SuspendAndShutdown]
+idleAction=0
+POWERDEVIL
+
+install -d -m 755 "/home/${KIOSK_USER}/.config/xfce4/xfconf/xfce-perchannel-xml"
+cat > "/home/${KIOSK_USER}/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-screensaver.xml" <<XFCELOCK
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-screensaver" version="1.0">
+  <property name="lock-enabled" type="bool" value="false"/>
+  <property name="saver-enabled" type="bool" value="false"/>
+</channel>
+XFCELOCK
+
+cat > "/home/${KIOSK_USER}/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-power-manager.xml" <<XFCEPOWER
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-power-manager" version="1.0">
+  <property name="xfce4-power-manager" type="empty">
+    <property name="dpms-enabled" type="bool" value="false"/>
+    <property name="blank-on-ac" type="int" value="0"/>
+    <property name="sleep-display-ac" type="int" value="0"/>
+    <property name="inactive-on-ac" type="int" value="0"/>
+  </property>
+</channel>
+XFCEPOWER
+
+install -d -m 755 "/home/${KIOSK_USER}/.config/autostart"
+for locker in light-locker xscreensaver xfce4-screensaver org.kde.kscreenlocker; do
+  cat > "/home/${KIOSK_USER}/.config/autostart/${locker}.desktop" <<LOCKER
+[Desktop Entry]
+Type=Application
+Name=${locker}
+Hidden=true
+LOCKER
+done
 
 chown -R "${KIOSK_USER}:${KIOSK_USER}" "/home/${KIOSK_USER}/.config"
 
