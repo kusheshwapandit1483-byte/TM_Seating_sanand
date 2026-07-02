@@ -50,14 +50,21 @@ fi
 echo "Installing required packages"
 apt-get update
 apt-get install -y ffmpeg curl unclutter x11-xserver-utils lightdm
-if apt-cache show chromium-browser >/dev/null 2>&1; then
-  apt-get install -y chromium-browser
-elif apt-cache show chromium >/dev/null 2>&1; then
-  apt-get install -y chromium
-else
-  echo "Could not find chromium-browser or chromium package" >&2
+CHROMIUM_PACKAGE=""
+for package in chromium chromium-browser; do
+  candidate="$(apt-cache policy "${package}" 2>/dev/null | awk '/Candidate:/ {print $2; exit}')"
+  if [[ -n "${candidate}" && "${candidate}" != "(none)" ]]; then
+    CHROMIUM_PACKAGE="${package}"
+    break
+  fi
+done
+
+if [[ -z "${CHROMIUM_PACKAGE}" ]]; then
+  echo "Could not find an installable chromium or chromium-browser package" >&2
   exit 1
 fi
+
+apt-get install -y "${CHROMIUM_PACKAGE}"
 
 if ! id "${KIOSK_USER}" >/dev/null 2>&1; then
   echo "Creating kiosk user: ${KIOSK_USER}"
