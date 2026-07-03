@@ -17,7 +17,7 @@ const conditionTile = document.querySelector("#conditionTile");
 const conditionStatus = document.querySelector("#conditionStatus");
 
 const previewHost = window.location.hostname || "127.0.0.1";
-const liveMode = (new URLSearchParams(window.location.search).get("live") || "webrtc").toLowerCase();
+const liveMode = (new URLSearchParams(window.location.search).get("live") || "hls").toLowerCase();
 const webrtcPreviewUrl = `http://${previewHost}:8889/pramacam`;
 const hlsPreviewUrl = `http://${previewHost}:8888/pramacam/index.m3u8`;
 const mjpegPreviewUrl = "/live.mjpg";
