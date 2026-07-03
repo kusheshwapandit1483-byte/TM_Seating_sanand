@@ -2,7 +2,7 @@
 set -euo pipefail
 
 KIOSK_USER="${KIOSK_USER:-operator}"
-KIOSK_URL="${KIOSK_URL:-http://127.0.0.1:8080/?live=mjpeg}"
+KIOSK_URL="${KIOSK_URL:-http://127.0.0.1:8889/pramacam}"
 APP_DIR="${APP_DIR:-$(pwd)}"
 APP_RUN_USER="${APP_RUN_USER:-${SUDO_USER:-$(id -un)}}"
 APP_SERVICE_NAME="${APP_SERVICE_NAME:-tm-camera-monitor}"
@@ -154,7 +154,7 @@ cat > /usr/local/bin/tm-camera-kiosk-start <<'KIOSK'
 #!/usr/bin/env bash
 set -euo pipefail
 
-URL="${KIOSK_URL:-http://127.0.0.1:8080/?live=mjpeg}"
+URL="${KIOSK_URL:-http://127.0.0.1:8889/pramacam}"
 LOG_FILE="${HOME}/tm-camera-kiosk.log"
 
 exec >>"${LOG_FILE}" 2>&1

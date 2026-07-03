@@ -2,7 +2,7 @@
 set -euo pipefail
 
 KIOSK_USER="${KIOSK_USER:-operator}"
-KIOSK_URL="${KIOSK_URL:-http://127.0.0.1:8080/?live=mjpeg}"
+KIOSK_URL="${KIOSK_URL:-http://127.0.0.1:8889/pramacam}"
 APP_SERVICE_NAME="${APP_SERVICE_NAME:-tm-camera-monitor}"
 MEDIAMTX_SERVICE_NAME="${MEDIAMTX_SERVICE_NAME:-tm-mediamtx}"
 BROWSER_SERVICE_NAME="${BROWSER_SERVICE_NAME:-tm-camera-kiosk}"
