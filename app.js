@@ -237,7 +237,18 @@ function loadHls(url) {
     hlsPlayer.loadSource(url);
     hlsPlayer.attachMedia(video);
     hlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => undefined));
-    hlsPlayer.on(window.Hls.Events.ERROR, () => showEmptyState(true));
+    hlsPlayer.on(window.Hls.Events.ERROR, (event, data) => {
+      if (data.fatal) {
+        if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) {
+          hlsPlayer.startLoad();
+        } else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
+          hlsPlayer.recoverMediaError();
+        } else {
+          showEmptyState(true);
+          setTimeout(() => loadHls(url), 5000);
+        }
+      }
+    });
   }
 }
 
