@@ -233,7 +233,13 @@ function loadHls(url) {
   }
 
   if (window.Hls && window.Hls.isSupported()) {
-    hlsPlayer = new window.Hls({ lowLatencyMode: true, backBufferLength: 30 });
+    hlsPlayer = new window.Hls({
+      lowLatencyMode: true,
+      backBufferLength: 30,
+      liveSyncDurationCount: 2,
+      liveMaxLatencyDurationCount: 5,
+      liveDurationIntersection: true,
+    });
     hlsPlayer.loadSource(url);
     hlsPlayer.attachMedia(video);
     hlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => undefined));
