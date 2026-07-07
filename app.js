@@ -487,19 +487,19 @@ image.addEventListener("error", () => showEmptyState(true));
 video.addEventListener("playing", () => showEmptyState(false));
 video.addEventListener("error", () => showEmptyState(true));
 
-// Prevent HLS latency drift manually without freezing the player
+// Prevent HLS latency drift manually by aggressively keeping it at the live edge
 setInterval(() => {
   if (activeView === "liveView" && liveMode === "hls" && !video.hidden) {
     if (video.buffered && video.buffered.length > 0) {
       const liveEdge = video.buffered.end(video.buffered.length - 1);
       const latency = liveEdge - video.currentTime;
-      if (latency > 10) {
-        // If we are more than 10 seconds behind, skip forward
-        video.currentTime = liveEdge - 2;
+      if (latency > 2.5) {
+        // If we are more than 2.5 seconds behind the downloaded buffer, skip forward to exactly 0.5s from the edge
+        video.currentTime = liveEdge - 0.5;
       }
     }
   }
-}, 5000);
+}, 2000);
 
 window.addEventListener("resize", renderDetectionOverlay);
 
