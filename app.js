@@ -233,13 +233,7 @@ function loadHls(url) {
   }
 
   if (window.Hls && window.Hls.isSupported()) {
-    hlsPlayer = new window.Hls({
-      lowLatencyMode: true,
-      backBufferLength: 30,
-      liveSyncDurationCount: 2,
-      liveMaxLatencyDurationCount: 5,
-      liveDurationIntersection: true,
-    });
+    hlsPlayer = new window.Hls({ lowLatencyMode: true, backBufferLength: 30 });
     hlsPlayer.loadSource(url);
     hlsPlayer.attachMedia(video);
     hlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => undefined));
@@ -492,6 +486,21 @@ image.addEventListener("load", () => showEmptyState(false));
 image.addEventListener("error", () => showEmptyState(true));
 video.addEventListener("playing", () => showEmptyState(false));
 video.addEventListener("error", () => showEmptyState(true));
+
+// Prevent HLS latency drift manually without freezing the player
+setInterval(() => {
+  if (activeView === "liveView" && liveMode === "hls" && !video.hidden) {
+    if (video.buffered && video.buffered.length > 0) {
+      const liveEdge = video.buffered.end(video.buffered.length - 1);
+      const latency = liveEdge - video.currentTime;
+      if (latency > 10) {
+        // If we are more than 10 seconds behind, skip forward
+        video.currentTime = liveEdge - 2;
+      }
+    }
+  }
+}, 5000);
+
 window.addEventListener("resize", renderDetectionOverlay);
 
 recordingEmptyState.classList.remove("is-hidden");
