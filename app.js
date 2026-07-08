@@ -177,10 +177,10 @@ async function refreshEsp32Status() {
     if (typeof data.occupancy !== "undefined") {
       personCount.textContent = formatCount(data.occupancy);
     }
-    if (typeof data.total_in !== "undefined") {
+    if (entryCount && typeof data.total_in !== "undefined") {
       entryCount.textContent = formatCount(data.total_in);
     }
-    if (typeof data.total_out !== "undefined") {
+    if (exitCount && typeof data.total_out !== "undefined") {
       exitCount.textContent = formatCount(data.total_out);
     }
     if (data.state) {

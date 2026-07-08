@@ -117,7 +117,7 @@ Port: 1883
 Topic: eagle/system/status
 ```
 
-The ESP32 status payload should include `occupancy`, `total_in`, and `total_out`. These appear in the dashboard as Persons Inside, Entries, and Exits.
+The ESP32 status payload should include `occupancy`. This appears in the dashboard as Persons Inside.
 
 Optional startup overrides:
 
