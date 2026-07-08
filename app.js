@@ -225,8 +225,11 @@ function loadHls(url) {
   frame.hidden = true;
   video.hidden = false;
 
+  // Cache-busting URL so the browser doesn't cache a 404 error if the camera is still booting
+  const cacheBustedUrl = url.includes("?") ? `${url}&t=${Date.now()}` : `${url}?t=${Date.now()}`;
+
   if (video.canPlayType("application/vnd.apple.mpegurl")) {
-    video.src = url;
+    video.src = cacheBustedUrl;
     video.load();
     video.play().catch(() => undefined);
     return;
@@ -234,7 +237,7 @@ function loadHls(url) {
 
   if (window.Hls && window.Hls.isSupported()) {
     hlsPlayer = new window.Hls({ lowLatencyMode: true, backBufferLength: 30 });
-    hlsPlayer.loadSource(url);
+    hlsPlayer.loadSource(cacheBustedUrl);
     hlsPlayer.attachMedia(video);
     hlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => undefined));
     hlsPlayer.on(window.Hls.Events.ERROR, (event, data) => {
