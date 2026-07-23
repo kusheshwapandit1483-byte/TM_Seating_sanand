@@ -17,7 +17,8 @@ const conditionTile = document.querySelector("#conditionTile");
 const conditionStatus = document.querySelector("#conditionStatus");
 
 const previewHost = window.location.hostname || "127.0.0.1";
-const liveMode = (new URLSearchParams(window.location.search).get("live") || "hls").toLowerCase();
+const requestedLiveMode = (new URLSearchParams(window.location.search).get("live") || "webrtc").toLowerCase();
+const liveMode = ["webrtc", "mjpeg", "hls"].includes(requestedLiveMode) ? requestedLiveMode : "webrtc";
 const webrtcPreviewUrl = `http://${previewHost}:8889/pramacam`;
 const hlsPreviewUrl = `http://${previewHost}:8888/pramacam/index.m3u8`;
 const mjpegPreviewUrl = "/live.mjpg";
@@ -236,7 +237,13 @@ function loadHls(url) {
   }
 
   if (window.Hls && window.Hls.isSupported()) {
-    hlsPlayer = new window.Hls({ lowLatencyMode: true, backBufferLength: 30 });
+    hlsPlayer = new window.Hls({
+      lowLatencyMode: true,
+      backBufferLength: 0,
+      liveSyncDurationCount: 1,
+      liveMaxLatencyDurationCount: 2,
+      maxLiveSyncPlaybackRate: 1.5,
+    });
     hlsPlayer.loadSource(cacheBustedUrl);
     hlsPlayer.attachMedia(video);
     hlsPlayer.on(window.Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => undefined));
@@ -248,7 +255,7 @@ function loadHls(url) {
           hlsPlayer.recoverMediaError();
         } else {
           showEmptyState(true);
-          setTimeout(() => loadHls(url), 5000);
+          queueMicrotask(() => loadHls(url));
         }
       }
     });
@@ -490,19 +497,18 @@ image.addEventListener("error", () => showEmptyState(true));
 video.addEventListener("playing", () => showEmptyState(false));
 video.addEventListener("error", () => showEmptyState(true));
 
-// Prevent HLS latency drift manually while maintaining a stable 5-second buffer
+// HLS is an opt-in fallback. Keep it at the live edge.
 setInterval(() => {
   if (activeView === "liveView" && liveMode === "hls" && !video.hidden) {
     if (video.buffered && video.buffered.length > 0) {
       const liveEdge = video.buffered.end(video.buffered.length - 1);
       const latency = liveEdge - video.currentTime;
-      if (latency > 7) {
-        // If we are more than 7 seconds behind, skip forward to keep a solid 5-second safety buffer
-        video.currentTime = liveEdge - 5;
+      if (latency > 1.25) {
+        video.currentTime = Math.max(0, liveEdge - 0.1);
       }
     }
   }
-}, 5000);
+}, 1000);
 
 window.addEventListener("resize", renderDetectionOverlay);
 
