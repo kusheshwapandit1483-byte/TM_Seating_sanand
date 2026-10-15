@@ -24,17 +24,22 @@ http://RASPBERRY_PI_IP:8080
 
 ## Live preview URL
 
-For low delay, use the MediaMTX WebRTC page:
+For the approximately two-second delay target, use the dashboard's WebRTC player:
 
 ```text
-http://127.0.0.1:8889/pramacam
+http://127.0.0.1:8080/?live=webrtc
 ```
 
 From another device:
 
 ```text
-http://RASPBERRY_PI_IP:8889/pramacam
+http://RASPBERRY_PI_IP:8080/?live=webrtc
 ```
+
+The player requests minimal receiver buffering and reconnects stalled or heavily
+buffered playback. The camera and network still determine end-to-end delay.
+See [update and measurement steps](docs/LIVE_PREVIEW_DELAY.md), including existing
+kiosks that open the direct MediaMTX page on port 8889.
 
 HLS also works but usually has delay:
 
