@@ -25,7 +25,6 @@ const mjpegPreviewUrl = "/live.mjpg";
 const fixedPreviewUrl = liveMode === "hls" ? hlsPreviewUrl : liveMode === "mjpeg" ? mjpegPreviewUrl : webrtcPreviewUrl;
 const directVideoExtensions = [".mp4", ".webm", ".ogg", ".mov"];
 let hlsPlayer = null;
-let liveWebRTCPlayer = null;
 let recordingHlsPlayer = null;
 let activeView = "liveView";
 let recordingFallbackClip = null;
@@ -241,10 +240,8 @@ function loadHls(url) {
     hlsPlayer = new window.Hls({
       lowLatencyMode: true,
       backBufferLength: 0,
-      liveSyncDuration: 1,
-      liveMaxLatencyDuration: 2,
-      maxBufferLength: 2,
-      maxMaxBufferLength: 4,
+      liveSyncDurationCount: 1,
+      liveMaxLatencyDurationCount: 2,
       maxLiveSyncPlaybackRate: 1.5,
     });
     hlsPlayer.loadSource(cacheBustedUrl);
@@ -283,11 +280,10 @@ function loadPreviewPage(url) {
   video.pause();
   video.removeAttribute("src");
   video.load();
-  frame.hidden = true;
-  frame.removeAttribute("src");
-  video.hidden = false;
-  if (liveWebRTCPlayer) liveWebRTCPlayer.close();
-  liveWebRTCPlayer = new window.LiveWebRTCPlayer(video, url, showEmptyState);
+  video.hidden = true;
+  frame.src = url;
+  frame.hidden = false;
+  showEmptyState(false);
 }
 
 function loadMjpeg(url) {
@@ -474,7 +470,6 @@ async function refreshRecordingsList() {
 }
 
 function showView(targetId) {
-  const returningToLive = targetId === "liveView" && activeView !== "liveView";
   activeView = targetId;
   navButtons.forEach((button) => {
     button.classList.toggle("is-active", button.dataset.viewTarget === targetId);
@@ -486,7 +481,6 @@ function showView(targetId) {
   if (targetId === "recordingsView") {
     refreshRecordingsList();
   }
-  if (returningToLive) loadFixedPreview();
 }
 
 navButtons.forEach((button) => {
@@ -517,12 +511,6 @@ setInterval(() => {
 }, 1000);
 
 window.addEventListener("resize", renderDetectionOverlay);
-window.addEventListener("beforeunload", () => {
-  if (liveWebRTCPlayer) liveWebRTCPlayer.close();
-});
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && activeView === "liveView") loadFixedPreview();
-});
 
 recordingEmptyState.classList.remove("is-hidden");
 loadFixedPreview();
