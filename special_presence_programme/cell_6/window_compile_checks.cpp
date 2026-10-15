@@ -90,3 +90,25 @@ static_assert(robotCannotRelatchAfterClearOutsideWindow(), "No late relatch");
 static_assert(millisWraparound(), "millis rollover is supported");
 static_assert(invalidDataAndMissingCameraConfirmation(), "Invalid or unconfirmed evidence cannot latch");
 static_assert(expiredWindowCannotReappearAfterLongUptime(), "Expired windows remain disarmed");
+
+constexpr bool operatorResetClearsAndPreventsImmediateRelatch() {
+  Cell6PresenceWindow gate{};
+  gate.arm(100);
+  for (uint32_t t = 100; t <= 2600; t += 500) gate.observe(t, true, true, true, false);
+  if (!gate.latched) return false;
+  gate.resetByOperator();
+  if (gate.latched || gate.armed || gate.candidateActive) return false;
+  // The old eight-second window would still be open without disarming it.
+  for (uint32_t t = 3000; t <= 7000; t += 500) gate.observe(t, true, true, true, false);
+  return !gate.latched;
+}
+constexpr bool newExitAfterResetAllowsNewCorrection() {
+  Cell6PresenceWindow gate{};
+  gate.arm(100);
+  gate.resetByOperator();
+  gate.arm(10000);
+  for (uint32_t t = 10000; t <= 12500; t += 500) gate.observe(t, true, true, true, false);
+  return gate.latched;
+}
+static_assert(operatorResetClearsAndPreventsImmediateRelatch(), "Operator reset clears and disarms old correction");
+static_assert(newExitAfterResetAllowsNewCorrection(), "A new counted EXIT can open a new check after reset");

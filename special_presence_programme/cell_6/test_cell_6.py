@@ -86,6 +86,16 @@ class Cell6PreservationTests(unittest.TestCase):
         self.assertEqual(updated['refreshRunOutputs'].count('setRunOccupiedOutputs();'), 1)
         self.assertIn('VACANCY_CLEAR_MS && insidePresenceReadyForEmpty(now)', updated['updateRunOutputTimers'])
 
+    def test_count_becomes_one_and_operator_reset_clears_the_correction(self):
+        updated = functions(NEW)
+        occupancy = updated['recomputeOccupancyFromCameraTotals']
+        self.assertIn('presenceOverride = countedOccupancy == 0 && anyInsidePresenceLatched();', occupancy)
+        self.assertIn('currentOccupancy = presenceOverride ? 1 : countedOccupancy;', occupancy)
+        reset = updated['handleClearCountHold']
+        self.assertIn('presenceWindow.resetByOperator();', reset)
+        self.assertIn('cameras[i].presenceLatched = false;', reset)
+        self.assertLess(reset.index('presenceWindow.resetByOperator();'), reset.index('recomputeOccupancyFromCameraTotals();'))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -29,7 +29,7 @@
 #include "cell_6_presence_window.h"
 
 // ============== FIRMWARE VERSION ==============
-#define FW_VERSION "1.7.2-cell-6-post-exit-8s"
+#define FW_VERSION "1.7.3-cell-6-latched-count-reset"
 
 // ============== W5500 SPI PINS ==============
 #define ETH_SPI_SCK   13
@@ -979,7 +979,15 @@ void handleClearCountHold(const char* source) {
     cameras[i].entries = 0;
     cameras[i].exits = 0;
   }
-  // Clearing counters cannot clear a confirmed person from the interior camera.
+  // Explicit operator count-reset clears the correction too, as requested.
+  // Disarm the old window so the same camera detection cannot immediately relatch.
+  for (int i = 0; i < cameraCount; i++) {
+    if (!cameras[i].isInsideCamera) continue;
+    cameras[i].presenceWindow.resetByOperator();
+    cameras[i].presenceLatched = false;
+    cameras[i].presenceIgnoredLate = false;
+  }
+  logEvent("PRESENCE_OPERATOR_RESET", source);
   recomputeOccupancyFromCameraTotals();
   roomWasOccupied = (currentState == STATE_RUN);
   vacancyClearActive = false;

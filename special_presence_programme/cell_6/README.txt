@@ -13,7 +13,7 @@ implementation paths. It was a rewritten implementation, which made
 comparison against the supplied production source difficult. Cell 6 instead
 retains all original functions and the complete status tables, logging and
 persistence paths. It changes only the integration points needed for presence.
-Source size: original 1,505 lines; Cell 6 1,763 lines (plus the small shared gate header and compile checks).
+Source size: original 1,505 lines; Cell 6 1,771 lines (plus the small shared gate header and compile checks).
 Original functions: 42. All retained. 26 unchanged, 16 extended. 7 new helpers.
 All 49 original #define settings are unchanged except the firmware version.
 MAX ENTRY/MAX EXIT aggregation and the individual relay output helpers are
@@ -61,10 +61,11 @@ When normal occupancy is zero and inside presence is confirmed, effective
 currentOccupancy is 1. Presence never adds a synthetic ENTRY, changes a raw
 counter, or reduces a positive normal count to one.
 An EXIT while normal countedOccupancy is zero remains ignored by normal counting.
-The independent presence latch then clears only on fresh confirmed-clear data.
-Count-clear cannot erase a confirmed inside person or bypass stale presence.
+The independent presence latch clears on fresh confirmed-clear data OR the usual
+operator count-reset action. The displayed/MQTT occupancy is 1 while latched,
+although raw MAX ENTRY/MAX EXIT counters are never changed by the correction.
 
-POST-EXIT RULE (firmware 1.7.2-cell-6-post-exit-8s)
+POST-EXIT RULE (firmware 1.7.3-cell-6-latched-count-reset)
 A NEW presence correction is accepted only in an eight-second window after an
 accepted EXIT takes the NORMAL count from a positive value to ZERO. Ignored EXIT
 messages at zero, duplicate reports which do not clear the normal count, boot,
@@ -80,7 +81,7 @@ presence correction. They are not classified as a robot by this rule; timing
 cannot identify the detected object.
 
 An already-accepted correction stays latched beyond eight seconds until fresh
-camera clear (two seconds with no person in interior/door ROI). It must NOT expire
+camera clear (two seconds with no person in interior/door ROI) OR operator reset. It must NOT expire
 just because the window closes if someone may still be inside. Missing or invalid
 messages break a candidate streak and cannot erase an already-accepted presence.
 
@@ -103,6 +104,16 @@ person appearing after the eight-second deadline is ignored by this fallback too
 Normal ENTRY/EXIT counting stays active and unchanged at all times. In particular,
 a model false-positive ENTRY can still increase the NORMAL count; the eight-second
 rule applies to the independent presence fallback, not to normal crossing events.
+
+OPERATOR COUNT RESET
+Hold GREEN for at least 5 seconds, then release BEFORE 10 seconds, exactly as
+in the original programme. This now clears BOTH the normal counters and the
+presence correction. The count returns to zero; the existing five-second
+vacancy delay still runs before robot release. The old post-EXIT window is
+closed and candidate continuity cleared, so the same ongoing detection cannot
+immediately restore occupancy to one. A later accepted counted EXIT can open a
+new eight-second window normally. A 10-second hold still toggles maintenance;
+a short start acknowledgement does not clear counts in RUN.
 
 WHAT STAYS THE SAME
 Actual GPIO macros: W5500 13/12/11/14, IRQ/RST -1; red21, green18, yellow17,
@@ -132,7 +143,7 @@ python build_cell_6.py regenerates this sketch and changes.patch from the retain
 source. It resets the delivered role fields to blank: edit IDs AFTER rebuilding.
 python test_cell_6.py verifies preservation of original functions/settings and
 compatibility with the companion presence message fields.
-window_compile_checks.cpp checks 11 timing/state scenarios in the C++ compiler
+window_compile_checks.cpp checks 13 timing/state scenarios in the C++ compiler
 using the SAME gate class as production. No runtime device I/O is performed.
 See VALIDATION.txt for compiler results and the limits of local verification.
 No device has been flashed by this task. Before enabling the robot, commission

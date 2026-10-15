@@ -38,7 +38,7 @@
  
  // ============== FIRMWARE VERSION ==============
 -#define FW_VERSION "1.6.0-max-exit-nc-camera-fail-continue"
-+#define FW_VERSION "1.7.2-cell-6-post-exit-8s"
++#define FW_VERSION "1.7.3-cell-6-latched-count-reset"
  
  // ============== W5500 SPI PINS ==============
  #define ETH_SPI_SCK   13
@@ -401,17 +401,25 @@
    roomWasOccupied = false;
    vacancyClearActive = false;
    runRedBlinkOn = false;
-@@ -774,7 +979,8 @@
+@@ -774,7 +979,16 @@
      cameras[i].entries = 0;
      cameras[i].exits = 0;
    }
 -  currentOccupancy = 0;
-+  // Clearing counters cannot clear a confirmed person from the interior camera.
++  // Explicit operator count-reset clears the correction too, as requested.
++  // Disarm the old window so the same camera detection cannot immediately relatch.
++  for (int i = 0; i < cameraCount; i++) {
++    if (!cameras[i].isInsideCamera) continue;
++    cameras[i].presenceWindow.resetByOperator();
++    cameras[i].presenceLatched = false;
++    cameras[i].presenceIgnoredLate = false;
++  }
++  logEvent("PRESENCE_OPERATOR_RESET", source);
 +  recomputeOccupancyFromCameraTotals();
    roomWasOccupied = (currentState == STATE_RUN);
    vacancyClearActive = false;
    runRedBlinkOn = false;
-@@ -845,7 +1051,7 @@
+@@ -845,7 +1059,7 @@
    if (cameraCount == 0) return;
    if (startupSettling) return;
    // Step 1: Detect camera timeouts
@@ -420,7 +428,7 @@
    for (int i = 0; i < cameraCount; i++) {
      if (cameras[i].hasSeen && !cameras[i].disconnected) {
        unsigned long lastSeen = cameras[i].lastHb;
-@@ -898,6 +1104,12 @@
+@@ -898,6 +1112,12 @@
    pubDoc.clear();
    pubDoc["state"] = stateNames[currentState];
    pubDoc["occupancy"] = currentOccupancy;
@@ -433,7 +441,7 @@
    pubDoc["relay"] = occupancyRelayActive();
  
    unsigned long rawTotalIn = 0, rawTotalOut = 0;
-@@ -912,6 +1124,14 @@
+@@ -912,6 +1132,14 @@
      cam["exits"] = cameras[i].exits;
      cam["net"] = (long)cameras[i].entries - (long)cameras[i].exits;
      cam["disconnected"] = cameras[i].disconnected;
@@ -448,7 +456,7 @@
      rawTotalIn += cameras[i].entries;
      rawTotalOut += cameras[i].exits;
    }
-@@ -935,6 +1155,10 @@
+@@ -935,6 +1163,10 @@
    pubDoc["raw_total_net"] = (long)rawTotalIn - (long)rawTotalOut;
    pubDoc["ts"] = now;
  
@@ -459,7 +467,7 @@
    serializeJson(pubDoc, pubBuf, sizeof(pubBuf));
  #if RAW_STATUS_DEBUG
    Serial.print(F("[RAW_OUT] topic=eagle/system/status payload="));
-@@ -1036,7 +1260,7 @@
+@@ -1036,7 +1268,7 @@
      snprintf(detail, sizeof(detail), "expected=%d,missing=%d", expectedCameras, missing);
      logEvent("SETTLING_DONE", detail);
  
@@ -468,7 +476,7 @@
        changeState(STATE_FAULT);
      } else {
  #if BYPASS_AWAIT_START
-@@ -1115,16 +1339,27 @@
+@@ -1115,16 +1347,27 @@
    pubDoc["cameras"] = cameraCount;
    pubDoc["state"] = stateNames[currentState];
    pubDoc["occupancy"] = currentOccupancy;
@@ -497,7 +505,7 @@
    serializeJson(pubDoc, pubBuf, sizeof(pubBuf));
  #if RAW_STATUS_DEBUG
    Serial.print(F("[RAW_OUT] topic=eagle/system/diag payload="));
-@@ -1186,7 +1421,7 @@
+@@ -1186,7 +1429,7 @@
    else Serial.print(F("0.0.0.0"));
    Serial.println(F(" broker=192.168.10.1:1883"));
  
@@ -506,7 +514,7 @@
    Serial.print(msgCountEvent);
    Serial.print(F(" hb="));
    Serial.print(msgCountHeartbeat);
-@@ -1239,6 +1474,17 @@
+@@ -1239,6 +1482,17 @@
      Serial.println((long)doors[i].entries - (long)doors[i].exits);
    }
  
@@ -524,7 +532,7 @@
    Serial.println(F("[CAMERAS] raw per-camera data"));
    if (cameraCount == 0) {
      Serial.println(F("  none"));
-@@ -1349,7 +1595,7 @@
+@@ -1349,7 +1603,7 @@
  // ============== SETUP ==============
  
  void setup() {
@@ -533,7 +541,7 @@
    delay(1000);
  
    Serial.println(F("================================================"));
-@@ -1425,7 +1671,10 @@
+@@ -1425,7 +1679,10 @@
    mqttBroker.subscribe("eagle/+/heartbeat", [](const char* topic, const char* payload) {
      onMqttMessage(topic, payload);
    });
@@ -545,7 +553,7 @@
  
    mqttBroker.begin();
  
-@@ -1434,6 +1683,15 @@
+@@ -1434,6 +1691,15 @@
    Serial.println(EXPECTED_CAMERA_COUNT);
    for (size_t i = 0; i < EXPECTED_CAMERA_COUNT; i++) {
      addCamera(EXPECTED_CAMERAS[i].id, EXPECTED_CAMERAS[i].doorLabel);

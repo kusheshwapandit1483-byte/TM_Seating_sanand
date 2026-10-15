@@ -27,6 +27,15 @@ struct Cell6PresenceWindow {
 
   constexpr void breakContinuity() { candidateActive = false; }
 
+  constexpr void resetByOperator() {
+    armed = false;
+    exitAt = 0;
+    candidateActive = false;
+    candidateAt = 0;
+    lastSampleAt = 0;
+    latched = false;
+  }
+
   constexpr void expire(uint32_t now) {
     if (armed && uint32_t(now - exitAt) > WINDOW_MS) {
       armed = false;

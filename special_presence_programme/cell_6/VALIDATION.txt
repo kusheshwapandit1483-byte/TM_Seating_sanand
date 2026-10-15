@@ -1,14 +1,14 @@
-CELL 6 — 1.7.2-cell-6-post-exit-8s — 15 October 2026
+CELL 6 — 1.7.3-cell-6-latched-count-reset — 15 October 2026
 
 Full ESP32-S3 compile and binary export: PASS (exit code 0).
 FQBN esp32:esp32:esp32s3; ESP32 core 3.3.5, PicoMQTT 1.3.0, ArduinoJson 7.4.3.
-Storage: 1,040,083 / 1,310,720 bytes (79%). Static RAM: 49,476 bytes (15%).
+Storage: 1,040,167 / 1,310,720 bytes (79%). Static RAM: 49,476 bytes (15%).
 RAM available for local variables: 278,204 bytes.
 The compiled staged sketch, timing header and checks match the delivered files byte-for-byte.
 The delivered camera-ID fields remain blank for the operator to configure.
 No binary is packaged; compile after assigning roles with your existing board settings.
 
-Actual shared gate: 11 compiler-evaluated scenarios passed.
+Actual shared gate: 13 compiler-evaluated scenarios passed.
 - No EXIT means no presence-only correction.
 - Confirmation must exceed two seconds, not merely equal it.
 - Detection starting after eight seconds cannot latch.
@@ -20,19 +20,21 @@ Actual shared gate: 11 compiler-evaluated scenarios passed.
 - A late detection cannot relatch after a correction clears outside the window.
 - millis() rollover is supported; expired windows remain explicitly disarmed.
 - Invalid data and absent camera confirmation cannot establish a correction.
+- Operator reset clears the correction and closes the old window.
+- An unchanged continuing detection cannot relatch after reset; a new counted EXIT can open a new check.
 The shared header also passed standalone ESP32 C++17 checking with -Wall -Wextra -Werror.
 
-Six source-preservation/protocol/integration regression tests: PASS.
+Seven source-preservation/protocol/integration regression tests: PASS.
 All 42 original functions retained; 26 unchanged and 16 extended; seven new helpers.
 All 49 original defines are preserved except firmware version.
 MAX ENTRY/MAX EXIT, output helpers, buttons, Ethernet/recovery, persistence/logging,
 serial tables/commands and main-loop bodies remain unchanged from the attachment.
 Companion reCamera function/JSON and behavioural checks: PASS.
 
-Source sketch: 1,763 lines versus original 1,505, plus timing header/checks.
+Source sketch: 1,771 lines versus original 1,505, plus timing header/checks.
 Original SHA256: 97820ae9318dc43f4a57e898f7e8a046ab399d6cc69682dc4e468ae660e9759a
-Sketch SHA256: fda6dfe1e4cb140fca1205ac7e02f4f0da3323e233d694eea343c4d883ee3cf0
-Timing-header SHA256: 1b8cb7062075429afe0dafa0a954b7fb1093857bb9743fcbc7aa9499652d71e0
+Sketch SHA256: db346f04709215f34ff908d521e9e01e147103dc5d2ffb4ce0324ee54b9a0aec
+Timing-header SHA256: 95b81337d844ccafe6183be205d1cacf1a382a735fc02e725484d897a48f08fa
 
 Operational interpretation:
 An accepted EXIT reducing normal count to zero opens the eight-second window.
@@ -40,7 +42,10 @@ Zero-count ignored/duplicate EXITs do not restart it. A new post-EXIT candidate
 streak must exceed 2s and be camera-confirmed before the eight-second deadline.
 Robot release waits for the eight-second check as well as the original five-second
 minimum clear delay. During the check, the output uses clearing blink, not steady
-occupied red. Existing corrections persist until clear. Outside the window, late
+occupied red. Existing corrections persist until confirmed clear OR operator count-reset.
+The displayed/MQTT occupancy is 1 while corrected. Operator reset clears both
+raw counts and the correction, disarms the old window, and retains the usual
+five-second release delay. The GREEN button hold timings remain unchanged. Outside the window, late
 or missing live detection alone does not create a new occupied indication.
 Normal positive counts and original configured fault/maintenance policies still apply.
 

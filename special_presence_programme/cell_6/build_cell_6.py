@@ -40,7 +40,7 @@ replace(' *   RED + Buzzer : GPIO6\n *   GREEN        : GPIO43\n *   YELLOW     
         ' *   RED + Buzzer : GPIO21\n *   GREEN        : GPIO18\n *   YELLOW       : GPIO17\n *   HEALTHY/MAIN : GPIO16')
 replace(' *   GPIO3 ADC input through optocoupler workaround', ' *   GPIO47 digital NC green button input')
 replace('#define FW_VERSION "1.6.0-max-exit-nc-camera-fail-continue"',
-        '#define FW_VERSION "1.7.2-cell-6-post-exit-8s"')
+        '#define FW_VERSION "1.7.3-cell-6-latched-count-reset"')
 replace('#include <SPIFFS.h>', '#include <SPIFFS.h>\n#include "cell_6_presence_window.h"')
 replace('const char DEVICE_ID[] = "composite_hub";', '''// ============== CELL 6 CAMERA CONFIGURATION ==============
 // SET THESE TO YOUR PHYSICAL CAMERA IDs BEFORE UPLOADING.
@@ -275,7 +275,15 @@ edit_function('onMqttMessage', '''      cameras[idx].exits++;
 edit_function('clearBootCounts', '  currentOccupancy = 0;', '''  currentOccupancy = 0;
   countedOccupancy = 0;
   presenceOverride = false;''')
-edit_function('handleClearCountHold', '  currentOccupancy = 0;', '''  // Clearing counters cannot clear a confirmed person from the interior camera.
+edit_function('handleClearCountHold', '  currentOccupancy = 0;', '''  // Explicit operator count-reset clears the correction too, as requested.
+  // Disarm the old window so the same camera detection cannot immediately relatch.
+  for (int i = 0; i < cameraCount; i++) {
+    if (!cameras[i].isInsideCamera) continue;
+    cameras[i].presenceWindow.resetByOperator();
+    cameras[i].presenceLatched = false;
+    cameras[i].presenceIgnoredLate = false;
+  }
+  logEvent("PRESENCE_OPERATOR_RESET", source);
   recomputeOccupancyFromCameraTotals();''')
 edit_function('runAggregation', '  bool anyFault = false;', '  bool anyFault = !cameraRolesValid;')
 edit_function('runWatchdog', '    if (CAMERA_FAILURE_TRIGGERS_FAULT && missing > 0) {',
