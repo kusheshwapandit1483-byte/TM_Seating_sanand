@@ -30,16 +30,19 @@
   */
  
  #include <SPI.h>
-@@ -28,7 +28,7 @@
+@@ -26,9 +26,10 @@
+ #include <ArduinoJson.h>
+ #include <esp_task_wdt.h>
  #include <SPIFFS.h>
++#include "cell_6_presence_window.h"
  
  // ============== FIRMWARE VERSION ==============
 -#define FW_VERSION "1.6.0-max-exit-nc-camera-fail-continue"
-+#define FW_VERSION "1.7.1-cell-6-interior-presence"
++#define FW_VERSION "1.7.2-cell-6-post-exit-8s"
  
  // ============== W5500 SPI PINS ==============
  #define ETH_SPI_SCK   13
-@@ -97,14 +97,24 @@
+@@ -97,14 +98,24 @@
  #define LOG_PATH              "/log/events.csv"
  #define LOG_PREV_PATH         "/log/events_prev.csv"
  
@@ -49,7 +52,7 @@
 +// Blank defaults intentionally prevent RUN until the inside/outside roles are assigned.
 +#define CELL_6_INSIDE_CAMERA_ID  ""
 +#define CELL_6_OUTSIDE_CAMERA_ID ""
-+#define PRESENCE_CONFIRM_MS 2000UL          // More than 2s, confirmed by camera flow
++#define PRESENCE_CONFIRM_MS 2000UL          // >2s camera AND post-EXIT ESP confirmation
 +#define PRESENCE_SOURCE_MAX_AGE_MS 1000UL   // Camera's reported source-frame age
 +#define PRESENCE_MESSAGE_TIMEOUT_MS 1500UL // No fresh presence message = unknown
 +
@@ -66,7 +69,7 @@
  };
  #define EXPECTED_CAMERA_COUNT (sizeof(EXPECTED_CAMERAS) / sizeof(EXPECTED_CAMERAS[0]))
  
-@@ -136,6 +146,16 @@
+@@ -136,6 +147,18 @@
    bool hasSeen;               // Have we ever heard from this camera?
    bool disconnected;          // Currently considered offline?
    unsigned long disconnectedSince;
@@ -77,13 +80,15 @@
 +  bool presenceValid;
 +  bool presenceLatched;
 +  bool presenceClear;
++  bool presenceIgnoredLate;
++  Cell6PresenceWindow presenceWindow;
 +  unsigned long lastPresence;
 +  long presenceFrameAge;
 +  char presenceState[12];
  };
  
  #define MAX_CAMERAS 4
-@@ -162,7 +182,10 @@
+@@ -162,7 +185,10 @@
  unsigned long lastCountsSave = 0;
  
  // Aggregation
@@ -95,7 +100,7 @@
  unsigned long lastStatusPublish = 0;
  unsigned long lastWatchdog = 0;
  unsigned long lastDiag = 0;
-@@ -196,13 +219,15 @@
+@@ -196,13 +222,15 @@
  // Diagnostics counters
  unsigned long msgCountEvent = 0;
  unsigned long msgCountHeartbeat = 0;
@@ -112,17 +117,18 @@
  
  // State name lookup (must match SystemState enum order)
  const char* stateNames[] = {
-@@ -224,6 +249,9 @@
+@@ -224,6 +252,10 @@
    strncpy(cameraIds[idx], id, 31);
    cameraIds[idx][31] = '\0';
    memset(&cameras[idx], 0, sizeof(CameraState));
 +  cameras[idx].isInsideCamera = strcmp(id, CELL_6_INSIDE_CAMERA_ID) == 0;
++  cameras[idx].presenceWindow = Cell6PresenceWindow{};
 +  cameras[idx].presenceFrameAge = -1;
 +  strcpy(cameras[idx].presenceState, "unknown");
    strncpy(cameras[idx].doorLabel, doorLabel, sizeof(cameras[idx].doorLabel) - 1);
    Serial.print(F("[CAM] Registered: "));
    Serial.print(id);
-@@ -304,6 +332,123 @@
+@@ -304,6 +336,147 @@
    Serial.println(F("=== EVENT LOG END ==="));
  }
  
@@ -130,7 +136,8 @@
 +// The companion reCamera flow observes fresh, unmasked detections outside the
 +// door ROI (within its optional interior polygon), confirms >2s presence and
 +// confirms clear after 2s without a person in either interior or door ROI.
-+// Only the configured INSIDE camera is authoritative here.
++// Only the configured INSIDE camera is authoritative here. NEW corrections can
++// begin only during the 8s window after a counted EXIT leaves normal occupancy 0.
 +
 +bool insidePresenceFresh(const CameraState& cam, unsigned long now) {
 +  return cam.presenceSeen && cam.presenceValid &&
@@ -148,12 +155,24 @@
 +  if (!cameraRolesValid) return false;
 +  bool foundInside = false;
 +  for (int i = 0; i < cameraCount; i++) {
-+    const CameraState& cam = cameras[i];
++    CameraState& cam = cameras[i];
 +    if (!cam.isInsideCamera) continue;
 +    foundInside = true;
-+    if (!insidePresenceFresh(cam, now) || !cam.presenceClear || cam.presenceLatched) return false;
++    cam.presenceWindow.expire((uint32_t)now);
++    // Late/unknown detections do not create an all-day red interlock. An already
++    // accepted correction remains occupied until fresh clear; the 8s check must finish.
++    if (cam.presenceLatched || cam.presenceWindow.open(now)) return false;
 +  }
 +  return foundInside;
++}
++
++void armInsidePostExitWindow(unsigned long now) {
++  for (int i = 0; i < cameraCount; i++) {
++    if (!cameras[i].isInsideCamera) continue;
++    cameras[i].presenceWindow.arm((uint32_t)now);
++    cameras[i].presenceIgnoredLate = false;
++    logEvent("POST_EXIT_WINDOW", cameraIds[i]);
++  }
 +}
 +
 +bool validateCell6CameraRoles() {
@@ -177,6 +196,7 @@
 +  CameraState& cam = cameras[idx];
 +  cam.presenceValid = false;
 +  cam.presenceClear = false;
++  cam.presenceWindow.breakContinuity();
 +  strcpy(cam.presenceState, "unknown");
 +  // Unknown/invalid data must not erase an already-confirmed person.
 +  refreshRunOutputs();
@@ -198,7 +218,8 @@
 +    return;
 +  }
 +  if (!doc["valid"].is<bool>() || !doc["present"].is<bool>() ||
-+      !doc["state"].is<const char*>() || !doc["frame_age_ms"].is<long>()) {
++      !doc["state"].is<const char*>() || !doc["frame_age_ms"].is<long>() ||
++      !doc["candidates"].is<unsigned int>()) {
 +    errPresence++;
 +    invalidateInsidePresence(idx);
 +    return;
@@ -209,8 +230,9 @@
 +  bool isClear = strcmp(state, "clear") == 0;
 +  bool isPending = strcmp(state, "pending") == 0;
 +  bool isUnknown = strcmp(state, "unknown") == 0;
++  bool candidate = doc["candidates"].as<unsigned int>() > 0;
 +  if ((!isPresent && !isClear && !isPending && !isUnknown) ||
-+      (isPresent != present && !isUnknown)) {
++      (isPresent != present && !isUnknown) || (isClear && candidate)) {
 +    errPresence++;
 +    invalidateInsidePresence(idx);
 +    return;
@@ -220,7 +242,7 @@
 +               (unsigned long)frameAge <= PRESENCE_SOURCE_MAX_AGE_MS;
 +  // Retained duration proves >2s even if the person has since moved into door ROI.
 +  unsigned long confirmedMs = doc["confirmed_ms"] | 0UL;
-+  if (valid && isPresent && !cam.presenceLatched &&
++  if (valid && isPresent &&
 +      (!doc["confirmed_ms"].is<unsigned long>() || confirmedMs <= PRESENCE_CONFIRM_MS)) {
 +    errPresence++;
 +    invalidateInsidePresence(idx);
@@ -234,8 +256,16 @@
 +  cam.presenceFrameAge = frameAge;
 +  strncpy(cam.presenceState, valid ? state : "unknown", sizeof(cam.presenceState) - 1);
 +  cam.presenceState[sizeof(cam.presenceState) - 1] = '\0';
-+  if (valid && isPresent && present) cam.presenceLatched = true;
-+  if (cam.presenceClear) cam.presenceLatched = false;
++  // Camera's retained confirmation alone is insufficient: the ESP observes a
++  // NEW >2s candidate streak after EXIT, wholly inside the 8s acceptance window.
++  cam.presenceWindow.observe((uint32_t)now, valid, candidate,
++                             isPresent && present && confirmedMs > PRESENCE_CONFIRM_MS,
++                             cam.presenceClear);
++  cam.presenceLatched = cam.presenceWindow.latched;
++  bool ignoredLate = valid && candidate && !cam.presenceWindow.open((uint32_t)now) &&
++                     !cam.presenceLatched;
++  if (ignoredLate && !cam.presenceIgnoredLate) logEvent("PRESENCE_IGNORED_OUTSIDE_WINDOW", cameraIds[idx]);
++  cam.presenceIgnoredLate = ignoredLate;
 +  if (wasLatched != cam.presenceLatched) {
 +    logEvent(cam.presenceLatched ? "PRESENCE_ON" : "PRESENCE_CLEAR", cameraIds[idx]);
 +  }
@@ -246,7 +276,7 @@
  // ============== COUNTER PERSISTENCE ==============
  
  // Merge cameras on one physical door: ENTRY and EXIT both use the maximum camera count.
-@@ -362,17 +507,21 @@
+@@ -362,17 +535,21 @@
    long net = (long)totalIn - (long)totalOut;
    if (net < 0) net = 0;
    if (net > MAX_OCCUPANCY) net = MAX_OCCUPANCY;
@@ -270,32 +300,29 @@
    countsDirty = true;
  
    char detail[80];
-@@ -515,6 +664,10 @@
+@@ -515,6 +692,10 @@
          roomWasOccupied = true;
          vacancyClearActive = false;
          setRunOccupiedOutputs();
 +      } else if (!insidePresenceReadyForEmpty(millis())) {
 +        roomWasOccupied = true;
 +        vacancyClearActive = false;
-+        setRunOccupiedOutputs(); // Pending/stale interior data cannot enable robot.
++        refreshRunOutputs(); // Blink while checking the post-EXIT window; no false steady red.
        } else {
          roomWasOccupied = false;
          vacancyClearActive = false;
-@@ -563,6 +716,13 @@
+@@ -563,6 +744,10 @@
      return;
    }
  
-+  if (!insidePresenceReadyForEmpty(millis())) {
++  if (!insidePresenceReadyForEmpty(millis()) && !roomWasOccupied) {
 +    roomWasOccupied = true;
-+    vacancyClearActive = false;
-+    setRunOccupiedOutputs();
-+    return;
 +  }
 +
    if (roomWasOccupied && !vacancyClearActive) {
      vacancyClearActive = true;
      vacancyClearStarted = millis();
-@@ -600,7 +760,10 @@
+@@ -600,7 +785,10 @@
  }
  
  void updateRunOutputTimers(unsigned long now) {
@@ -307,7 +334,20 @@
  
    if (currentOccupancy > 0) {
      vacancyClearActive = false;
-@@ -627,7 +790,8 @@
+@@ -609,7 +797,11 @@
+     return;
+   }
+ 
+-  if (now - vacancyClearStarted >= VACANCY_CLEAR_MS) {
++  // The original 5s minimum remains. An open 8s post-EXIT window extends it.
++  if (now - vacancyClearStarted >= VACANCY_CLEAR_MS && insidePresenceReadyForEmpty(now)) {
++    unsigned long sessionIn = 0, sessionOut = 0;
++    computeProcessedTotals(&sessionIn, &sessionOut);
++    if (sessionIn || sessionOut) resetSessionCountsForVacancy("post_exit_check_complete");
+     vacancyClearActive = false;
+     roomWasOccupied = false;
+     setRunEmptyOutputs();
+@@ -627,7 +819,8 @@
    return currentState == STATE_MAINTENANCE ||
           (currentState == STATE_RUN &&
            currentOccupancy == 0 &&
@@ -317,7 +357,7 @@
  }
  
  // ============== MQTT MESSAGE HANDLER ==============
-@@ -656,6 +820,12 @@
+@@ -656,6 +849,12 @@
  
    unsigned long now = millis();
  
@@ -330,7 +370,7 @@
    if (cameras[idx].disconnected) {
      cameras[idx].disconnected = false;
      cameras[idx].disconnectedSince = 0;
-@@ -707,8 +877,9 @@
+@@ -707,8 +906,9 @@
        refreshRunOutputs();
  
      } else if (strcmp(type, "EXIT") == 0) {
@@ -342,7 +382,17 @@
          Serial.println(devId);
  
          char detail[64];
-@@ -753,6 +924,8 @@
+@@ -721,6 +921,9 @@
+ 
+       cameras[idx].exits++;
+       recomputeOccupancyFromCameraTotals();
++      // Only an accepted EXIT taking the normal count to zero opens the window.
++      // Duplicate/ignored EXITs at zero do not restart the 8s deadline.
++      if (countedOccupancy == 0) armInsidePostExitWindow(now);
+ 
+       Serial.print(F("[COUNT] "));
+       Serial.print(devId);
+@@ -753,6 +956,8 @@
      cameras[i].exits = 0;
    }
    currentOccupancy = 0;
@@ -351,7 +401,7 @@
    roomWasOccupied = false;
    vacancyClearActive = false;
    runRedBlinkOn = false;
-@@ -774,7 +947,8 @@
+@@ -774,7 +979,8 @@
      cameras[i].entries = 0;
      cameras[i].exits = 0;
    }
@@ -361,7 +411,7 @@
    roomWasOccupied = (currentState == STATE_RUN);
    vacancyClearActive = false;
    runRedBlinkOn = false;
-@@ -845,7 +1019,7 @@
+@@ -845,7 +1051,7 @@
    if (cameraCount == 0) return;
    if (startupSettling) return;
    // Step 1: Detect camera timeouts
@@ -370,7 +420,7 @@
    for (int i = 0; i < cameraCount; i++) {
      if (cameras[i].hasSeen && !cameras[i].disconnected) {
        unsigned long lastSeen = cameras[i].lastHb;
-@@ -898,6 +1072,12 @@
+@@ -898,6 +1104,12 @@
    pubDoc.clear();
    pubDoc["state"] = stateNames[currentState];
    pubDoc["occupancy"] = currentOccupancy;
@@ -383,7 +433,7 @@
    pubDoc["relay"] = occupancyRelayActive();
  
    unsigned long rawTotalIn = 0, rawTotalOut = 0;
-@@ -912,6 +1092,12 @@
+@@ -912,6 +1124,14 @@
      cam["exits"] = cameras[i].exits;
      cam["net"] = (long)cameras[i].entries - (long)cameras[i].exits;
      cam["disconnected"] = cameras[i].disconnected;
@@ -392,11 +442,13 @@
 +      cam["presence_state"] = insidePresenceFresh(cameras[i], now) ? cameras[i].presenceState : "unknown";
 +      cam["presence_fresh"] = insidePresenceFresh(cameras[i], now);
 +      cam["presence_latched"] = cameras[i].presenceLatched;
++      cam["post_exit_window_open"] = cameras[i].presenceWindow.open((uint32_t)now);
++      cam["presence_ignored_outside_window"] = cameras[i].presenceIgnoredLate;
 +    }
      rawTotalIn += cameras[i].entries;
      rawTotalOut += cameras[i].exits;
    }
-@@ -935,6 +1121,10 @@
+@@ -935,6 +1155,10 @@
    pubDoc["raw_total_net"] = (long)rawTotalIn - (long)rawTotalOut;
    pubDoc["ts"] = now;
  
@@ -407,7 +459,7 @@
    serializeJson(pubDoc, pubBuf, sizeof(pubBuf));
  #if RAW_STATUS_DEBUG
    Serial.print(F("[RAW_OUT] topic=eagle/system/status payload="));
-@@ -1036,7 +1226,7 @@
+@@ -1036,7 +1260,7 @@
      snprintf(detail, sizeof(detail), "expected=%d,missing=%d", expectedCameras, missing);
      logEvent("SETTLING_DONE", detail);
  
@@ -416,7 +468,7 @@
        changeState(STATE_FAULT);
      } else {
  #if BYPASS_AWAIT_START
-@@ -1115,16 +1305,27 @@
+@@ -1115,16 +1339,27 @@
    pubDoc["cameras"] = cameraCount;
    pubDoc["state"] = stateNames[currentState];
    pubDoc["occupancy"] = currentOccupancy;
@@ -445,7 +497,7 @@
    serializeJson(pubDoc, pubBuf, sizeof(pubBuf));
  #if RAW_STATUS_DEBUG
    Serial.print(F("[RAW_OUT] topic=eagle/system/diag payload="));
-@@ -1186,7 +1387,7 @@
+@@ -1186,7 +1421,7 @@
    else Serial.print(F("0.0.0.0"));
    Serial.println(F(" broker=192.168.10.1:1883"));
  
@@ -454,7 +506,7 @@
    Serial.print(msgCountEvent);
    Serial.print(F(" hb="));
    Serial.print(msgCountHeartbeat);
-@@ -1239,6 +1440,17 @@
+@@ -1239,6 +1474,17 @@
      Serial.println((long)doors[i].entries - (long)doors[i].exits);
    }
  
@@ -472,7 +524,7 @@
    Serial.println(F("[CAMERAS] raw per-camera data"));
    if (cameraCount == 0) {
      Serial.println(F("  none"));
-@@ -1349,7 +1561,7 @@
+@@ -1349,7 +1595,7 @@
  // ============== SETUP ==============
  
  void setup() {
@@ -481,7 +533,7 @@
    delay(1000);
  
    Serial.println(F("================================================"));
-@@ -1425,7 +1637,10 @@
+@@ -1425,7 +1671,10 @@
    mqttBroker.subscribe("eagle/+/heartbeat", [](const char* topic, const char* payload) {
      onMqttMessage(topic, payload);
    });
@@ -493,7 +545,7 @@
  
    mqttBroker.begin();
  
-@@ -1434,6 +1649,15 @@
+@@ -1434,6 +1683,15 @@
    Serial.println(EXPECTED_CAMERA_COUNT);
    for (size_t i = 0; i < EXPECTED_CAMERA_COUNT; i++) {
      addCamera(EXPECTED_CAMERAS[i].id, EXPECTED_CAMERAS[i].doorLabel);

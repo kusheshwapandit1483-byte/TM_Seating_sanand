@@ -26,9 +26,10 @@
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
 #include <SPIFFS.h>
+#include "cell_6_presence_window.h"
 
 // ============== FIRMWARE VERSION ==============
-#define FW_VERSION "1.7.1-cell-6-interior-presence"
+#define FW_VERSION "1.7.2-cell-6-post-exit-8s"
 
 // ============== W5500 SPI PINS ==============
 #define ETH_SPI_SCK   13
@@ -103,7 +104,7 @@ IPAddress dnsIP(0, 0, 0, 0);
 // Blank defaults intentionally prevent RUN until the inside/outside roles are assigned.
 #define CELL_6_INSIDE_CAMERA_ID  ""
 #define CELL_6_OUTSIDE_CAMERA_ID ""
-#define PRESENCE_CONFIRM_MS 2000UL          // More than 2s, confirmed by camera flow
+#define PRESENCE_CONFIRM_MS 2000UL          // >2s camera AND post-EXIT ESP confirmation
 #define PRESENCE_SOURCE_MAX_AGE_MS 1000UL   // Camera's reported source-frame age
 #define PRESENCE_MESSAGE_TIMEOUT_MS 1500UL // No fresh presence message = unknown
 
@@ -153,6 +154,8 @@ struct CameraState {
   bool presenceValid;
   bool presenceLatched;
   bool presenceClear;
+  bool presenceIgnoredLate;
+  Cell6PresenceWindow presenceWindow;
   unsigned long lastPresence;
   long presenceFrameAge;
   char presenceState[12];
@@ -250,6 +253,7 @@ int addCamera(const char* id, const char* doorLabel) {
   cameraIds[idx][31] = '\0';
   memset(&cameras[idx], 0, sizeof(CameraState));
   cameras[idx].isInsideCamera = strcmp(id, CELL_6_INSIDE_CAMERA_ID) == 0;
+  cameras[idx].presenceWindow = Cell6PresenceWindow{};
   cameras[idx].presenceFrameAge = -1;
   strcpy(cameras[idx].presenceState, "unknown");
   strncpy(cameras[idx].doorLabel, doorLabel, sizeof(cameras[idx].doorLabel) - 1);
@@ -336,7 +340,8 @@ void exportLog() {
 // The companion reCamera flow observes fresh, unmasked detections outside the
 // door ROI (within its optional interior polygon), confirms >2s presence and
 // confirms clear after 2s without a person in either interior or door ROI.
-// Only the configured INSIDE camera is authoritative here.
+// Only the configured INSIDE camera is authoritative here. NEW corrections can
+// begin only during the 8s window after a counted EXIT leaves normal occupancy 0.
 
 bool insidePresenceFresh(const CameraState& cam, unsigned long now) {
   return cam.presenceSeen && cam.presenceValid &&
@@ -354,12 +359,24 @@ bool insidePresenceReadyForEmpty(unsigned long now) {
   if (!cameraRolesValid) return false;
   bool foundInside = false;
   for (int i = 0; i < cameraCount; i++) {
-    const CameraState& cam = cameras[i];
+    CameraState& cam = cameras[i];
     if (!cam.isInsideCamera) continue;
     foundInside = true;
-    if (!insidePresenceFresh(cam, now) || !cam.presenceClear || cam.presenceLatched) return false;
+    cam.presenceWindow.expire((uint32_t)now);
+    // Late/unknown detections do not create an all-day red interlock. An already
+    // accepted correction remains occupied until fresh clear; the 8s check must finish.
+    if (cam.presenceLatched || cam.presenceWindow.open(now)) return false;
   }
   return foundInside;
+}
+
+void armInsidePostExitWindow(unsigned long now) {
+  for (int i = 0; i < cameraCount; i++) {
+    if (!cameras[i].isInsideCamera) continue;
+    cameras[i].presenceWindow.arm((uint32_t)now);
+    cameras[i].presenceIgnoredLate = false;
+    logEvent("POST_EXIT_WINDOW", cameraIds[i]);
+  }
 }
 
 bool validateCell6CameraRoles() {
@@ -383,6 +400,7 @@ void invalidateInsidePresence(int idx) {
   CameraState& cam = cameras[idx];
   cam.presenceValid = false;
   cam.presenceClear = false;
+  cam.presenceWindow.breakContinuity();
   strcpy(cam.presenceState, "unknown");
   // Unknown/invalid data must not erase an already-confirmed person.
   refreshRunOutputs();
@@ -404,7 +422,8 @@ void handleInsidePresence(int idx, const char* payload, unsigned long now) {
     return;
   }
   if (!doc["valid"].is<bool>() || !doc["present"].is<bool>() ||
-      !doc["state"].is<const char*>() || !doc["frame_age_ms"].is<long>()) {
+      !doc["state"].is<const char*>() || !doc["frame_age_ms"].is<long>() ||
+      !doc["candidates"].is<unsigned int>()) {
     errPresence++;
     invalidateInsidePresence(idx);
     return;
@@ -415,8 +434,9 @@ void handleInsidePresence(int idx, const char* payload, unsigned long now) {
   bool isClear = strcmp(state, "clear") == 0;
   bool isPending = strcmp(state, "pending") == 0;
   bool isUnknown = strcmp(state, "unknown") == 0;
+  bool candidate = doc["candidates"].as<unsigned int>() > 0;
   if ((!isPresent && !isClear && !isPending && !isUnknown) ||
-      (isPresent != present && !isUnknown)) {
+      (isPresent != present && !isUnknown) || (isClear && candidate)) {
     errPresence++;
     invalidateInsidePresence(idx);
     return;
@@ -426,7 +446,7 @@ void handleInsidePresence(int idx, const char* payload, unsigned long now) {
                (unsigned long)frameAge <= PRESENCE_SOURCE_MAX_AGE_MS;
   // Retained duration proves >2s even if the person has since moved into door ROI.
   unsigned long confirmedMs = doc["confirmed_ms"] | 0UL;
-  if (valid && isPresent && !cam.presenceLatched &&
+  if (valid && isPresent &&
       (!doc["confirmed_ms"].is<unsigned long>() || confirmedMs <= PRESENCE_CONFIRM_MS)) {
     errPresence++;
     invalidateInsidePresence(idx);
@@ -440,8 +460,16 @@ void handleInsidePresence(int idx, const char* payload, unsigned long now) {
   cam.presenceFrameAge = frameAge;
   strncpy(cam.presenceState, valid ? state : "unknown", sizeof(cam.presenceState) - 1);
   cam.presenceState[sizeof(cam.presenceState) - 1] = '\0';
-  if (valid && isPresent && present) cam.presenceLatched = true;
-  if (cam.presenceClear) cam.presenceLatched = false;
+  // Camera's retained confirmation alone is insufficient: the ESP observes a
+  // NEW >2s candidate streak after EXIT, wholly inside the 8s acceptance window.
+  cam.presenceWindow.observe((uint32_t)now, valid, candidate,
+                             isPresent && present && confirmedMs > PRESENCE_CONFIRM_MS,
+                             cam.presenceClear);
+  cam.presenceLatched = cam.presenceWindow.latched;
+  bool ignoredLate = valid && candidate && !cam.presenceWindow.open((uint32_t)now) &&
+                     !cam.presenceLatched;
+  if (ignoredLate && !cam.presenceIgnoredLate) logEvent("PRESENCE_IGNORED_OUTSIDE_WINDOW", cameraIds[idx]);
+  cam.presenceIgnoredLate = ignoredLate;
   if (wasLatched != cam.presenceLatched) {
     logEvent(cam.presenceLatched ? "PRESENCE_ON" : "PRESENCE_CLEAR", cameraIds[idx]);
   }
@@ -667,7 +695,7 @@ void applyOutputs() {
       } else if (!insidePresenceReadyForEmpty(millis())) {
         roomWasOccupied = true;
         vacancyClearActive = false;
-        setRunOccupiedOutputs(); // Pending/stale interior data cannot enable robot.
+        refreshRunOutputs(); // Blink while checking the post-EXIT window; no false steady red.
       } else {
         roomWasOccupied = false;
         vacancyClearActive = false;
@@ -716,11 +744,8 @@ void refreshRunOutputs() {
     return;
   }
 
-  if (!insidePresenceReadyForEmpty(millis())) {
+  if (!insidePresenceReadyForEmpty(millis()) && !roomWasOccupied) {
     roomWasOccupied = true;
-    vacancyClearActive = false;
-    setRunOccupiedOutputs();
-    return;
   }
 
   if (roomWasOccupied && !vacancyClearActive) {
@@ -772,7 +797,11 @@ void updateRunOutputTimers(unsigned long now) {
     return;
   }
 
-  if (now - vacancyClearStarted >= VACANCY_CLEAR_MS) {
+  // The original 5s minimum remains. An open 8s post-EXIT window extends it.
+  if (now - vacancyClearStarted >= VACANCY_CLEAR_MS && insidePresenceReadyForEmpty(now)) {
+    unsigned long sessionIn = 0, sessionOut = 0;
+    computeProcessedTotals(&sessionIn, &sessionOut);
+    if (sessionIn || sessionOut) resetSessionCountsForVacancy("post_exit_check_complete");
     vacancyClearActive = false;
     roomWasOccupied = false;
     setRunEmptyOutputs();
@@ -892,6 +921,9 @@ void onMqttMessage(const char* topic, const char* payload) {
 
       cameras[idx].exits++;
       recomputeOccupancyFromCameraTotals();
+      // Only an accepted EXIT taking the normal count to zero opens the window.
+      // Duplicate/ignored EXITs at zero do not restart the 8s deadline.
+      if (countedOccupancy == 0) armInsidePostExitWindow(now);
 
       Serial.print(F("[COUNT] "));
       Serial.print(devId);
@@ -1097,6 +1129,8 @@ void publishSystemStatus(unsigned long now) {
       cam["presence_state"] = insidePresenceFresh(cameras[i], now) ? cameras[i].presenceState : "unknown";
       cam["presence_fresh"] = insidePresenceFresh(cameras[i], now);
       cam["presence_latched"] = cameras[i].presenceLatched;
+      cam["post_exit_window_open"] = cameras[i].presenceWindow.open((uint32_t)now);
+      cam["presence_ignored_outside_window"] = cameras[i].presenceIgnoredLate;
     }
     rawTotalIn += cameras[i].entries;
     rawTotalOut += cameras[i].exits;

@@ -67,11 +67,24 @@ class Cell6PreservationTests(unittest.TestCase):
         import json
         flow = json.loads((ROOT / 'recamera/production_flow.json').read_text(encoding='utf-8'))
         node = next(n for n in flow if n['id'] == 'prod_presence')
-        for field in ('state', 'valid', 'present', 'confirmed_ms', 'frame_age_ms'):
+        for field in ('state', 'valid', 'present', 'confirmed_ms', 'frame_age_ms', 'candidates'):
             self.assertIn('doc["' + field + '"]', NEW)
             self.assertRegex(node['func'], r'\b' + field + r'\s*[:,]')
         self.assertIn('topic: \'eagle/\' + deviceId + \'/presence\'', node['func'])
         self.assertIn('mqttBroker.subscribe("eagle/+/presence"', NEW)
+
+    def test_post_exit_gate_is_connected_to_actual_exit_and_output_paths(self):
+        updated = functions(NEW)
+        event = updated['onMqttMessage']
+        self.assertIn('if (countedOccupancy == 0) armInsidePostExitWindow(now);', event)
+        self.assertLess(event.index('logEvent("EXIT_IGNORED"'), event.index('armInsidePostExitWindow(now)'))
+        self.assertIn('cam.presenceWindow.observe(', updated['handleInsidePresence'])
+        self.assertIn('cam.presenceLatched = cam.presenceWindow.latched;', updated['handleInsidePresence'])
+        self.assertIn('cam.presenceWindow.open(now)', updated['insidePresenceReadyForEmpty'])
+        self.assertNotIn('!insidePresenceFresh', updated['insidePresenceReadyForEmpty'])
+        # At zero, an unconfirmed window uses clearing blink, not occupied steady red.
+        self.assertEqual(updated['refreshRunOutputs'].count('setRunOccupiedOutputs();'), 1)
+        self.assertIn('VACANCY_CLEAR_MS && insidePresenceReadyForEmpty(now)', updated['updateRunOutputTimers'])
 
 
 if __name__ == '__main__':

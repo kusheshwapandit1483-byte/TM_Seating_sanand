@@ -1,6 +1,7 @@
 CELL 6 — FULL PRODUCTION SOURCE WITH INTERIOR PRESENCE
 
-Open cell_6.ino in Arduino IDE. The sketch folder and sketch filename match.
+Open cell_6.ino in Arduino IDE. Keep cell_6_presence_window.h and
+window_compile_checks.cpp beside it in the SAME sketch folder; use the complete ZIP.
 This version starts from your exact attached production programme, not the
 earlier condensed esp32_presence sketch. The attached source is retained as
 reference_original.txt. changes.patch shows every edit against that source.
@@ -12,8 +13,8 @@ implementation paths. It was a rewritten implementation, which made
 comparison against the supplied production source difficult. Cell 6 instead
 retains all original functions and the complete status tables, logging and
 persistence paths. It changes only the integration points needed for presence.
-Source size: original 1,505 lines; Cell 6 1,729 lines.
-Original functions: 42. All retained. 26 unchanged, 16 extended. 6 new helpers.
+Source size: original 1,505 lines; Cell 6 1,763 lines (plus the small shared gate header and compile checks).
+Original functions: 42. All retained. 26 unchanged, 16 extended. 7 new helpers.
 All 49 original #define settings are unchanged except the firmware version.
 MAX ENTRY/MAX EXIT aggregation and the individual relay output helpers are
 textually identical to the attached source.
@@ -63,17 +64,45 @@ An EXIT while normal countedOccupancy is zero remains ignored by normal counting
 The independent presence latch then clears only on fresh confirmed-clear data.
 Count-clear cannot erase a confirmed inside person or bypass stale presence.
 
-The reCamera confirms presence after MORE THAN 2 seconds of qualifying fresh
-detections, and confirms clear after 2 seconds without accepted detections in
-the interior or door ROI. ESP32 checks the retained confirmed_ms duration and
-accepts presence only from CELL_6_INSIDE_CAMERA_ID. Outside presence is ignored.
-The original 5-second vacancy timer starts only at effective zero AND confirmed
-interior clear. Occupancy, pending detection, or stale data cancels that timer.
-Pending/unknown/stale interior data keeps RUN outputs robot-disabled. Existing
-presence remains latched through a communication/inference loss.
-This new release interlock applies even though CAMERA_FAILURE_TRIGGERS_FAULT=0
-still keeps other camera-offline reporting diagnostic-only, as originally set.
-The existing maintenance mode bypass remains unchanged.
+POST-EXIT RULE (firmware 1.7.2-cell-6-post-exit-8s)
+A NEW presence correction is accepted only in an eight-second window after an
+accepted EXIT takes the NORMAL count from a positive value to ZERO. Ignored EXIT
+messages at zero, duplicate reports which do not clear the normal count, boot,
+and manual count-clear do not open or restart the window.
+
+The inside camera must show fresh qualifying detections continuously for MORE
+THAN two seconds AFTER that EXIT, and the camera must also confirm >2s presence.
+The ESP's post-EXIT confirmation must finish no later than EXIT + 8000ms.
+A streak beginning late and completing after the deadline is rejected.
+At exactly 8000ms an already-completed confirmation may be accepted; after that,
+no new correction can start. New detections outside this window are ignored for
+presence correction. They are not classified as a robot by this rule; timing
+cannot identify the detected object.
+
+An already-accepted correction stays latched beyond eight seconds until fresh
+camera clear (two seconds with no person in interior/door ROI). It must NOT expire
+just because the window closes if someone may still be inside. Missing or invalid
+messages break a candidate streak and cannot erase an already-accepted presence.
+
+The robot remains disabled during the post-EXIT check with the original blinking
+clearing indication. The original five-second vacancy delay remains a MINIMUM;
+release waits until the eight-second window closes too. An accepted presence
+returns the output to steady occupied red. A later clear starts the usual vacancy
+delay again. This avoids enabling robot motion while presence is being checked.
+
+Outside the window, with normal count zero and no accepted presence latch,
+missing/pending/late inside detection no longer creates the old indefinite steady
+red interlock. CAMERA_FAILURE_TRIGGERS_FAULT=0 retains its original diagnostic-only
+camera-offline policy. Invalid camera ROLE configuration or Ethernet faults still
+block operation, and positive NORMAL counts still mean occupied regardless of
+this timing rule. Original maintenance mode remains an explicit operator bypass.
+
+This deliberately removes the unlimited empty-count presence correction: at boot
+or without a qualifying counted EXIT there is NO presence-only correction. A real
+person appearing after the eight-second deadline is ignored by this fallback too.
+Normal ENTRY/EXIT counting stays active and unchanged at all times. In particular,
+a model false-positive ENTRY can still increase the NORMAL count; the eight-second
+rule applies to the independent presence fallback, not to normal crossing events.
 
 WHAT STAYS THE SAME
 Actual GPIO macros: W5500 13/12/11/14, IRQ/RST -1; red21, green18, yellow17,
@@ -91,7 +120,8 @@ STATUS AND KIOSK COMPATIBILITY
 eagle/system/status occupancy now means effective occupancy.
 Added: cell="Cell 6", counted_occupancy, presence_override,
 presence_ready_for_empty, vacancy_clear_active, camera_roles_valid, and
-per-camera presence state. total_in/total_out/total_net remain normal totals.
+per-camera presence state, post_exit_window_open, and
+presence_ignored_outside_window. total_in/total_out/total_net remain normal totals.
 The occupancy-triggered kiosk uses effective occupancy and clear-delay fields.
 Outgoing JSON buffer is enlarged to 4096 and checked to avoid truncation.
 Inside messages above 512 bytes or invalid JSON/schema are rejected; invalid
@@ -102,6 +132,8 @@ python build_cell_6.py regenerates this sketch and changes.patch from the retain
 source. It resets the delivered role fields to blank: edit IDs AFTER rebuilding.
 python test_cell_6.py verifies preservation of original functions/settings and
 compatibility with the companion presence message fields.
+window_compile_checks.cpp checks 11 timing/state scenarios in the C++ compiler
+using the SAME gate class as production. No runtime device I/O is performed.
 See VALIDATION.txt for compiler results and the limits of local verification.
 No device has been flashed by this task. Before enabling the robot, commission
 the configured roles, zones, occupied/clear transitions, manual reset, maintenance,

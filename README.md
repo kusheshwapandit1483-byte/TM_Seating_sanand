@@ -50,6 +50,8 @@ The first positive status starts recording. A fresh zero count stops it only aft
 
 Recording uses ffmpeg `-c copy` to preserve stream quality. Each occupied visit creates an MP4, split into at most 30-minute segments for long visits. Files use unique session prefixes so rapid restarts cannot overwrite a previous clip. The recorder exits gracefully when the cell clears, finalizing the last MP4. Only completed clips appear in the Recordings list; active clips are protected from deletion and playback preparation.
 
+With Cell 6 firmware `1.7.2-cell-6-post-exit-8s`, a new presence correction is restricted to eight seconds after an accepted EXIT clears the normal count. The recorder stays on during this check. A correction accepted within the window keeps recording until clear; late detections ignored by that firmware do not start recording. This timing filter does not classify the detected object as a robot. See `special_presence_programme/cell_6/README.txt` for the exact rule.
+
 Open the app through `python3 server.py`, open Recordings, and choose a completed clip. HLS playback preparation remuxes the clip without changing image quality.
 
 ## Recording storage limit
