@@ -1,0 +1,61 @@
+Validation completed: 14 October 2026
+
+RECAMERA FLOW CHECKS: PASS
+Command: node tests/test_flows.js
+- Both exports parse as JSON; node IDs are unique and all wires resolve.
+- Every embedded function and Vue template script passes JavaScript syntax checks.
+- Production Track + Count function is byte-for-byte identical to the original.
+- Exactly 2000ms does not confirm; more than 2000ms confirms interior presence.
+- Empty detection frames and excessive source-frame gaps break confirmation.
+- Door-ROI detections retain an already-confirmed presence latch.
+- Retained confirmed_ms survives movement to the door before first ESP reception.
+- Two seconds of fresh clear frames release the latch.
+- Stale source publishes unknown and cannot erase a retained internal latch.
+- Timer ticks without inference cannot manufacture a presence or clear confirmation.
+- Invalid inference payload breaks continuity and cannot establish clear.
+- Optional interior polygon excludes detections outside it.
+- Reflection masks and confidence filtering apply to presence.
+- Alternate [x,y,w,h,class,score] model payload is supported.
+- Tested presence payloads remain below the ESP's 512-byte parse limit.
+- Maintenance save and production load preserve the interior polygon.
+
+ESP32 FULL COMPILE AND BINARY EXPORT: PASS (exit code 0)
+FQBN: esp32:esp32:esp32s3 (generic ESP32-S3 Dev Module defaults)
+ESP32 Arduino core: 3.3.5
+PicoMQTT: 1.3.0
+ArduinoJson: 7.4.3
+Sketch: esp32_presence/esp32_presence.ino
+Flash configuration: 4MB, default partitions; PSRAM disabled; USB CDC on boot disabled.
+Sketch storage: 1,022,755 bytes / 1,310,720 bytes (78%).
+Static RAM: 49,340 bytes / 327,680 bytes (15%).
+Remaining RAM for local variables: 278,340 bytes.
+Compiled binaries are included in the separate local ZIP, not in Git.
+This repository includes the Arduino source for rebuilding with your board settings.
+The binaries include TM_R1_01=inside and TM_R1_02=outside as configured in the source.
+Recompile after changing roles or board settings.
+
+Firmware checks by source review:
+- MAX ENTRY and MAX EXIT per shared door label are preserved independently.
+- A presence correction does not modify any raw entry or exit counter.
+- Positive normal occupancy is preserved, including values greater than one.
+- Only CAMERA_INSIDE supplies the presence override.
+- Normal zero-count EXIT guard uses counted_occupancy, not the presence override.
+- Manual count clear cannot erase the presence latch.
+- Stale/unknown/pending inside presence blocks robot release.
+- Vacancy release requires effective occupancy zero, confirmed interior clear,
+  and completion of the existing five-second delay.
+
+No device was flashed. No live reCamera, MQTT integration, relay wiring, camera
+coverage, model accuracy, or robot behaviour was tested on physical hardware.
+Use the setup and commissioning checks in README.txt before live operation.
+
+KIOSK UPDATE: PASS (14 October 2026)
+Command: python -m unittest discover -s TM_Seating_sanand/tests -v
+10 tests passed. Python source compilation and app.js syntax checks passed.
+Checks cover occupancy/presence-triggered recording, confirmed-clear delay,
+stale/malformed/retained MQTT status handling, oldest-first size-based cleanup,
+cache size accounting, active segment protection, oversized segment finalization,
+playback preparation protection, and ignoring obsolete retentionDays settings.
+A real installed FFmpeg/ffprobe test generated a synthetic camera source and
+verified playable MP4s after segmentation and graceful stop, plus HLS preparation.
+No live Raspberry Pi/Radxa service was restarted and no real archive was deleted.

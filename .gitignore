@@ -4,3 +4,8 @@ __pycache__/
 settings.json
 esp32file/
 .tmp_pycache/
+tests/tm-recorder-test-*/
+special_presence_programme/.build/
+special_presence_programme/firmware_binary/
+special_presence_programme/esp32_presence/build/
+special_presence_programme/arduino-cli.yaml

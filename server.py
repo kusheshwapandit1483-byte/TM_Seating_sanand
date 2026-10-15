@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import csv
 import json
 import os
 import signal
@@ -18,9 +19,9 @@ SETTINGS_FILE = Path(os.environ.get("SETTINGS_FILE", ROOT / "settings.json")).re
 HLS_CACHE_DIR = Path(os.environ.get("HLS_CACHE_DIR", RECORDINGS_DIR / ".hls")).resolve()
 RECORDING_SOURCE = os.environ.get("RECORDING_SOURCE", "rtsp://127.0.0.1:8554/pramacam")
 SEGMENT_SECONDS = int(os.environ.get("SEGMENT_SECONDS", "1800"))
-DEFAULT_RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "2"))
-MAX_RETENTION_DAYS = 2
-MIN_RETENTION_DAYS = 1
+STORAGE_LIMIT_BYTES = 35_000_000_000  # 35 GB, decimal; includes playback cache.
+ESP32_STATUS_MAX_AGE_SECONDS = 5
+STORAGE_CHECK_SECONDS = 10
 FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
 LIVE_PREVIEW_FPS = os.environ.get("LIVE_PREVIEW_FPS", "8")
 LIVE_PREVIEW_HEIGHT = os.environ.get("LIVE_PREVIEW_HEIGHT", "720")
@@ -43,7 +44,16 @@ AI_DETECTION_HOLD_SECONDS = float(os.environ.get("AI_DETECTION_HOLD_SECONDS", "1
 recorder_process = None
 recorder_started_at = None
 recorder_log = None
-recorder_lock = threading.Lock()
+recorder_lock = threading.RLock()
+storage_lock = threading.RLock()
+recorder_wake = threading.Event()
+storage_wake = threading.Event()
+recorder_session_prefix = None
+recorder_segments_file = RECORDINGS_DIR / ".recorder-segments.csv"
+recording_wanted = False
+recording_reason = "Waiting for ESP32 occupancy"
+storage_used_bytes = 0
+storage_over_limit = False
 shutdown_event = threading.Event()
 esp32_monitor = None
 person_detection_monitor = None
@@ -101,6 +111,7 @@ class ESP32StatusMonitor:
         self.connected = False
         self.last_error = "not connected"
         self.last_message_at = None
+        self.last_message_monotonic = None
         self.thread = threading.Thread(target=self.run, daemon=True)
 
     def start(self):
@@ -110,7 +121,8 @@ class ESP32StatusMonitor:
         with self.lock:
             payload = dict(self.latest or {})
             last_message_at = self.last_message_at
-            age_seconds = time.time() - last_message_at if last_message_at else None
+            age_seconds = (time.monotonic() - self.last_message_monotonic
+                           if self.last_message_monotonic is not None else None)
             return {
                 "connected": self.connected,
                 "host": self.host,
@@ -126,13 +138,18 @@ class ESP32StatusMonitor:
         with self.lock:
             self.connected = connected
             self.last_error = None if connected else error
+        recorder_wake.set()
 
     def set_latest(self, payload):
+        if not isinstance(payload, dict):
+            raise ValueError("ESP32 status must be a JSON object")
         with self.lock:
             self.latest = payload
             self.connected = True
             self.last_error = None
             self.last_message_at = time.time()
+            self.last_message_monotonic = time.monotonic()
+        recorder_wake.set()
 
     def connect_packet(self):
         client_id = f"tm-dashboard-{os.getpid()}"
@@ -162,7 +179,8 @@ class ESP32StatusMonitor:
         if qos:
             packet_id = body[payload_start:payload_start + 2]
             payload_start += 2
-        if topic == self.topic:
+        if topic == self.topic and not (header & 0x01):
+            # A retained historical status is not evidence of current cell occupancy.
             payload_text = body[payload_start:].decode("utf-8", errors="replace")
             self.set_latest(json.loads(payload_text))
         if qos == 1 and packet_id:
@@ -455,33 +473,16 @@ class PersonDetectionMonitor:
                 shutdown_event.wait(2)
             finally:
                 capture.release()
-def clamp_retention_days(value):
-    try:
-        days = int(value)
-    except (TypeError, ValueError):
-        days = DEFAULT_RETENTION_DAYS
-    return max(MIN_RETENTION_DAYS, min(MAX_RETENTION_DAYS, days))
-
-
 def load_settings():
-    settings = {"retentionDays": clamp_retention_days(DEFAULT_RETENTION_DAYS)}
-    if SETTINGS_FILE.exists():
-        try:
-            saved = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            settings["retentionDays"] = clamp_retention_days(saved.get("retentionDays"))
-        except (OSError, json.JSONDecodeError):
-            pass
-    return settings
+    # Fixed policy; legacy retentionDays settings no longer expire recording history.
+    return {"recordingMode": "occupied", "storageLimitGB": 35,
+            "storageLimitBytes": STORAGE_LIMIT_BYTES}
 
 
 def save_settings(settings):
-    safe_settings = {"retentionDays": clamp_retention_days(settings.get("retentionDays"))}
-    SETTINGS_FILE.write_text(json.dumps(safe_settings, indent=2), encoding="utf-8")
-    return safe_settings
-
-
-def get_retention_days():
-    return load_settings()["retentionDays"]
+    policy = load_settings()
+    SETTINGS_FILE.write_text(json.dumps(policy, indent=2), encoding="utf-8")
+    return policy
 
 
 def json_response(handler, status, payload):
@@ -517,44 +518,103 @@ def recorder_running():
 
 
 def recording_status():
-    return {
-        "running": recorder_running(),
-        "mode": "automatic",
-        "source": RECORDING_SOURCE,
-        "segmentSeconds": SEGMENT_SECONDS,
-        "recordingsDir": str(RECORDINGS_DIR),
-        "retentionDays": get_retention_days(),
-        "maxRetentionDays": MAX_RETENTION_DAYS,
-        "startedAt": recorder_started_at,
-    }
+    with recorder_lock:
+        return {
+            "running": recorder_running(),
+            "mode": "occupied",
+            "source": RECORDING_SOURCE,
+            "segmentSeconds": SEGMENT_SECONDS,
+            "recordingsDir": str(RECORDINGS_DIR),
+            "storageLimitBytes": STORAGE_LIMIT_BYTES,
+            "storageLimitGB": 35,
+            "storageUsedBytes": storage_used_bytes,
+            "storageOverLimit": storage_over_limit,
+            "wanted": recording_wanted,
+            "reason": recording_reason,
+            "startedAt": recorder_started_at,
+        }
 
 
-def cleanup_old_recordings():
-    retention_days = get_retention_days()
-    RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
-    HLS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cutoff = time.time() - (retention_days * 24 * 60 * 60)
-    deleted = 0
-    active_recording_stems = set()
-
-    for path in RECORDINGS_DIR.glob("*.mp4"):
+def active_recording_paths():
+    """Only ffmpeg's completed-segment CSV establishes a current-session clip is closed."""
+    with recorder_lock:
+        if not recorder_running() or not recorder_session_prefix:
+            return set()
+        completed = set()
         try:
-            if path.stat().st_mtime < cutoff:
+            with recorder_segments_file.open(newline="", encoding="utf-8") as stream:
+                for row in csv.reader(stream):
+                    if len(row) >= 3:
+                        completed.add(Path(row[0]).name)
+        except (OSError, csv.Error):
+            pass
+        return {p for p in RECORDINGS_DIR.glob(recorder_session_prefix + "*.mp4")
+                if p.name not in completed}
+
+
+def storage_bytes():
+    # Count each real file once, including a cache located outside the recordings folder.
+    files = set()
+    for root in (RECORDINGS_DIR, HLS_CACHE_DIR):
+        for path in root.rglob("*"):
+            if path.is_file() and not path.is_symlink():
+                files.add(path.resolve())
+    total = 0
+    for path in files:
+        try:
+            total += path.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def remove_playback_cache(path):
+    # Do not follow cache symlinks or recurse outside the configured cache directory.
+    root = HLS_CACHE_DIR.resolve()
+    target = path.resolve()
+    if not path.is_symlink() and target != root and root in target.parents:
+        shutil.rmtree(path, ignore_errors=True)
+
+
+def cleanup_old_recordings(protected_paths=(), protected_cache_dirs=()):
+    """Retain history by size, deleting the oldest CLOSED MP4 and its playback cache."""
+    global storage_used_bytes, storage_over_limit
+    with storage_lock:
+        RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+        HLS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        active = active_recording_paths() | set(protected_paths)
+        clips = []
+        for path in RECORDINGS_DIR.glob("*.mp4"):
+            try:
+                if not path.is_symlink():
+                    clips.append((path.stat().st_mtime, path))
+            except OSError:
+                pass
+        stems = {path.stem for _, path in clips}
+        # The same lock covers HLS preparation, so no in-progress cache is removed here.
+        for path in HLS_CACHE_DIR.iterdir():
+            if path.is_dir() and path.name not in stems and path not in protected_cache_dirs:
+                remove_playback_cache(path)
+        used = storage_bytes()
+        deleted = 0
+        for _, path in sorted(clips, key=lambda item: (item[0], item[1].name)):
+            if used <= STORAGE_LIMIT_BYTES:
+                break
+            # A new ffmpeg segment/session can begin after the initial directory snapshot.
+            if path in active or path in active_recording_paths():
+                continue
+            try:
                 path.unlink()
-                shutil.rmtree(HLS_CACHE_DIR / path.stem, ignore_errors=True)
-                deleted += 1
-            else:
-                active_recording_stems.add(path.stem)
-        except OSError:
-            pass
-
-    for path in HLS_CACHE_DIR.iterdir():
-        try:
-            if path.is_dir() and path.name not in active_recording_stems:
-                shutil.rmtree(path, ignore_errors=True)
-        except OSError:
-            pass
-
+            except OSError:
+                continue
+            remove_playback_cache(HLS_CACHE_DIR / path.stem)
+            deleted += 1
+            used = storage_bytes()
+        storage_used_bytes = used
+        storage_over_limit = used > STORAGE_LIMIT_BYTES
+    if storage_over_limit:
+        # If only the open segment prevents reclamation, finalize it before pruning.
+        recorder_wake.set()
     return deleted
 
 
@@ -572,16 +632,22 @@ def resolve_recording_path(name):
 
 
 def start_recorder():
-    global recorder_process, recorder_started_at, recorder_log
+    global recorder_process, recorder_started_at, recorder_log, recorder_session_prefix
 
     with recorder_lock:
+        if shutdown_event.is_set() or storage_over_limit:
+            return {"ok": False, "message": "Recorder waiting for available storage", "status": recording_status()}
         if recorder_running():
             return {"ok": True, "message": "Recorder already running", "status": recording_status()}
 
         RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
-        cleanup_old_recordings()
-        pattern = RECORDINGS_DIR / "data_%Y-%m-%d_%H-%M-%S.mp4"
+        # Unique session prefix prevents overwriting clips after a rapid stop/restart.
+        recorder_session_prefix = "data_" + str(time.time_ns()) + "_"
+        pattern = RECORDINGS_DIR / (recorder_session_prefix + "%Y-%m-%d_%H-%M-%S.mp4")
+        recorder_segments_file.unlink(missing_ok=True)
         log_path = RECORDINGS_DIR / "recorder.log"
+        if log_path.exists() and log_path.stat().st_size > 1_048_576:
+            log_path.replace(RECORDINGS_DIR / "recorder.previous.log")
         recorder_log = open(log_path, "ab")
 
         cmd = [
@@ -601,6 +667,10 @@ def start_recorder():
             "segment",
             "-segment_time",
             str(SEGMENT_SECONDS),
+            "-segment_list",
+            str(recorder_segments_file),
+            "-segment_list_type",
+            "csv",
             "-reset_timestamps",
             "1",
             "-strftime",
@@ -633,7 +703,7 @@ def start_recorder():
             }
 
         recorder_started_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
-        return {"ok": True, "message": "Automatic recording started", "status": recording_status()}
+        return {"ok": True, "message": "Occupied-cell recording started", "status": recording_status()}
 
 
 def stop_recorder():
@@ -655,35 +725,91 @@ def stop_recorder():
                 process.wait(timeout=5)
             except Exception:
                 process.kill()
+                process.wait(timeout=5)
+        if process.stdin:
+            process.stdin.close()
 
         recorder_process = None
         recorder_started_at = None
         if recorder_log:
             recorder_log.close()
             recorder_log = None
+        storage_wake.set()
         return {"ok": True, "message": "Recording stopped", "status": recording_status()}
 
 
+def occupancy_recording_decision(snapshot, previous):
+    """Fresh positive count starts; fresh confirmed-clear zero stops. Unknown holds state."""
+    data = snapshot.get("data") or {}
+    age = snapshot.get("ageSeconds")
+    if (not snapshot.get("connected") or age is None or age < 0
+            or age > ESP32_STATUS_MAX_AGE_SECONDS):
+        return previous, "ESP32 status unavailable; holding recording state"
+    if not isinstance(data, dict):
+        return previous, "Invalid ESP32 occupancy; holding recording state"
+    occupancy = data.get("occupancy")
+    if isinstance(occupancy, bool) or not isinstance(occupancy, int) or occupancy < 0:
+        return previous, "Invalid ESP32 occupancy; holding recording state"
+    if occupancy > 0:
+        return True, "Person inside cell"
+    for field in ("presence_ready_for_empty", "vacancy_clear_active"):
+        if field in data and not isinstance(data[field], bool):
+            return previous, "Invalid clear status; holding recording state"
+    if data.get("presence_ready_for_empty") is False or data.get("vacancy_clear_active") is True:
+        return previous, "Waiting for confirmed clear cell"
+    return False, "Cell empty"
+
+
 def ensure_recorder_running():
+    global recording_wanted, recording_reason
     if shutdown_event.is_set():
         return
-    if not recorder_running():
-        start_recorder()
+    snapshot = esp32_monitor.snapshot() if esp32_monitor else {}
+    with recorder_lock:
+        recording_wanted, recording_reason = occupancy_recording_decision(snapshot, recording_wanted)
+        running = recorder_running()
+        if storage_over_limit:
+            if running:
+                stop_recorder()
+            recording_reason = "Reclaiming recording storage"
+            storage_wake.set()
+        elif recording_wanted:
+            if not running:
+                start_recorder()
+        elif running:
+            stop_recorder()
+
+
+def recorder_control_loop():
+    while not shutdown_event.is_set():
+        ensure_recorder_running()
+        recorder_wake.wait(1)
+        recorder_wake.clear()
 
 
 def maintenance_loop():
     while not shutdown_event.is_set():
         cleanup_old_recordings()
-        ensure_recorder_running()
-        shutdown_event.wait(60)
+        storage_wake.wait(STORAGE_CHECK_SECONDS)
+        storage_wake.clear()
 
 
 def list_recordings():
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
-    cleanup_old_recordings()
+    active = active_recording_paths()
     files = []
-    for path in sorted(RECORDINGS_DIR.glob("*.mp4"), key=lambda item: item.stat().st_mtime, reverse=True):
-        stat = path.stat()
+    candidates = []
+    for path in RECORDINGS_DIR.glob("*.mp4"):
+        try:
+            if path not in active and not path.is_symlink():
+                candidates.append((path.stat().st_mtime, path))
+        except OSError:
+            pass
+    for _, path in sorted(candidates, reverse=True):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
         files.append(
             {
                 "name": path.name,
@@ -770,6 +896,15 @@ def stream_live_mjpeg(handler):
             process.kill()
 
 def ensure_recording_hls(name):
+    with storage_lock:
+        if resolve_recording_path(name) in active_recording_paths():
+            return {"ok": False, "message": "Recording is still being written"}
+        result = prepare_recording_hls(name)
+        storage_wake.set()
+        return result
+
+
+def prepare_recording_hls(name):
     recording_path = resolve_recording_path(name)
     if not recording_path:
         return {"ok": False, "message": "Recording not found"}
@@ -816,15 +951,26 @@ def ensure_recording_hls(name):
     ]
 
     try:
-        result = subprocess.run(
+        with subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             cwd=str(temp_dir),
-            timeout=900,
-            check=False,
-        )
+        ) as process:
+            deadline = time.monotonic() + 900
+            while True:
+                try:
+                    _, stderr = process.communicate(timeout=1)
+                    result = subprocess.CompletedProcess(cmd, process.returncode, stderr=stderr)
+                    break
+                except subprocess.TimeoutExpired:
+                    # Bound cache growth during preparation, not just after it finishes.
+                    cleanup_old_recordings(protected_paths={recording_path}, protected_cache_dirs={temp_dir})
+                    if storage_over_limit or time.monotonic() >= deadline:
+                        process.kill()
+                        process.communicate()
+                        raise RuntimeError("Playback preparation exceeded storage capacity or timeout")
     except Exception as exc:
         shutil.rmtree(temp_dir, ignore_errors=True)
         return {"ok": False, "message": f"Could not prepare HLS playback: {exc}"}
@@ -980,7 +1126,6 @@ class CameraHandler(SimpleHTTPRequestHandler):
             json_response(self, HTTPStatus.OK, payload)
             return
         if parsed.path == "/api/recording/status":
-            ensure_recorder_running()
             json_response(self, HTTPStatus.OK, recording_status())
             return
         if parsed.path == "/api/recordings":
@@ -997,7 +1142,6 @@ class CameraHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/settings":
             settings = load_settings()
-            settings["maxRetentionDays"] = MAX_RETENTION_DAYS
             json_response(self, HTTPStatus.OK, settings)
             return
         super().do_GET()
@@ -1012,9 +1156,8 @@ class CameraHandler(SimpleHTTPRequestHandler):
             return
         if parsed.path == "/api/settings":
             payload = read_json_body(self)
-            settings = save_settings({"retentionDays": payload.get("retentionDays")})
+            settings = save_settings(payload)
             cleanup_old_recordings()
-            settings["maxRetentionDays"] = MAX_RETENTION_DAYS
             json_response(self, HTTPStatus.OK, {"ok": True, "settings": settings, "status": recording_status()})
             return
         if parsed.path in ("/api/recording/start", "/api/recording/stop"):
@@ -1041,8 +1184,8 @@ if __name__ == "__main__":
     signal.signal(signal.SIGTERM, shutdown_handler)
     RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
     save_settings(load_settings())
-    start_result = start_recorder()
-    print(start_result["message"])
+    cleanup_old_recordings()
+    print("Recorder waiting for ESP32 occupancy; starts when a person is inside")
     esp32_monitor = ESP32StatusMonitor(ESP32_MQTT_HOST, ESP32_MQTT_PORT, ESP32_MQTT_TOPIC)
     esp32_monitor.start()
     person_detection_monitor = PersonDetectionMonitor(
@@ -1058,11 +1201,13 @@ if __name__ == "__main__":
     person_detection_monitor.start()
     maintenance = threading.Thread(target=maintenance_loop, daemon=True)
     maintenance.start()
+    recorder_control = threading.Thread(target=recorder_control_loop, daemon=True)
+    recorder_control.start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), CameraHandler)
     print(f"Camera Monitor running at http://0.0.0.0:{PORT}")
     print(f"Recording source: {RECORDING_SOURCE}")
     print(f"ESP32 MQTT: {ESP32_MQTT_HOST}:{ESP32_MQTT_PORT} topic {ESP32_MQTT_TOPIC}")
     print(f"AI detection: {AI_DETECTION_BACKEND} enabled={AI_DETECTION_ENABLED} source={AI_DETECTION_SOURCE}")
     print(f"Recordings folder: {RECORDINGS_DIR}")
-    print(f"Retention: {get_retention_days()} day(s), maximum {MAX_RETENTION_DAYS} day(s)")
+    print("Recording: occupied cell only; 35 GB archive; oldest completed recordings deleted first")
     server.serve_forever()

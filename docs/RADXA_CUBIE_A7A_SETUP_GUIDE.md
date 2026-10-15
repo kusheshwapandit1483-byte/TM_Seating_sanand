@@ -383,13 +383,13 @@ Default segment length:
 30 minutes
 ```
 
-This means the app creates one MP4 file every 30 minutes:
+Recording starts when ESP32 effective occupancy is positive and stops after the cell is confirmed clear. Long occupied visits are split into 30-minute segments:
 
 ```text
-recordings/data_YYYY-MM-DD_HH-MM-SS.mp4
+recordings/data_SESSION_YYYY-MM-DD_HH-MM-SS.mp4
 ```
 
-A recording may not play while it is still being written. Wait until the 30-minute segment finishes before testing playback.
+Active recordings are hidden from the list. A completed visit appears after recording stops, or a completed segment appears during a longer visit.
 
 The app prepares browser playback using HLS cache under:
 
@@ -421,8 +421,9 @@ Measured Radxa recording size:
 Recommendation:
 
 ```text
-64 GB card:  keep 1 day
-128 GB card: keep 2 days, but monitor free space
+Archive limit: 35 GB, including playback cache
+Oldest completed recordings are deleted first
+Recording runs only while the cell is occupied; there is no day-based expiry
 ```
 
 If Raspberry Pi recordings were smaller, for example 350 MB per 30 minutes, the camera stream used there was probably lower bitrate or sub stream. The app uses `ffmpeg -c copy`, so it saves the stream exactly as received.
@@ -689,7 +690,7 @@ Before handing over the system, verify:
 - `python3 server.py` starts without ffmpeg errors
 - `http://127.0.0.1:8080` opens the TM camera monitor page
 - Live view works in the app
-- A completed 30-minute recording appears in Recordings
+- A completed occupied visit or 30-minute segment appears in Recordings
 - Completed recording plays in the browser
 - Retention is set according to available storage
 

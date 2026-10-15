@@ -1,6 +1,6 @@
 # TM Camera Monitor
 
-This is a lightweight Raspberry Pi camera monitor with live preview, always-on recording, retention cleanup, and browser playback for saved clips.
+This is a lightweight Raspberry Pi camera monitor with live preview, occupancy-triggered recording, a 35 GB rolling archive, and browser playback for saved clips.
 
 ## Run the app on Raspberry Pi
 
@@ -10,7 +10,7 @@ From this folder:
 python3 server.py
 ```
 
-Recording starts automatically when the server starts. Open the website through the server, not by opening `index.html` directly:
+Recording waits for ESP32 occupancy and starts automatically when someone is inside the cell. Open the website through the server, not by opening `index.html` directly:
 
 ```text
 http://127.0.0.1:8080
@@ -44,58 +44,52 @@ http://127.0.0.1:8888/pramacam/index.m3u8
 
 ## Recording and playback
 
-The Python server records automatically from this default source:
+The server records from `rtsp://127.0.0.1:8554/pramacam` only while the ESP32 reports effective `occupancy > 0` on `eagle/system/status`. This includes the inside-camera presence correction when normal door counting is zero. Live preview continues when the cell is empty.
 
-```text
-rtsp://127.0.0.1:8554/pramacam
-```
+The first positive status starts recording. A fresh zero count stops it only after interior presence is confirmed clear and the ESP32 vacancy-clear delay has finished. With the special presence firmware, this preserves the two-second clear confirmation and five-second vacancy delay at the end of a visit. Missing, stale (over five seconds), or malformed MQTT data holds the previous recording decision: an active recording continues, and an idle recorder waits. Retained historical MQTT messages are ignored.
 
-Recording uses ffmpeg `-c copy`, so it does not reduce stream quality. By default it creates 30-minute MP4 clips in:
+Recording uses ffmpeg `-c copy` to preserve stream quality. Each occupied visit creates an MP4, split into at most 30-minute segments for long visits. Files use unique session prefixes so rapid restarts cannot overwrite a previous clip. The recorder exits gracefully when the cell clears, finalizing the last MP4. Only completed clips appear in the Recordings list; active clips are protected from deletion and playback preparation.
 
-```text
-recordings/
-```
+Open the app through `python3 server.py`, open Recordings, and choose a completed clip. HLS playback preparation remuxes the clip without changing image quality.
 
-New clips are named like data_YYYY-MM-DD_HH-MM-SS.mp4.
+## Recording storage limit
 
-Use the website only:
+The fixed archive budget is **35 GB (35,000,000,000 bytes)**, including MP4 recordings, HLS playback cache, and recorder support files. There is no one-day/two-day expiry: older clips remain until the size limit requires space. Old `retentionDays` settings and `RETENTION_DAYS` environment values no longer expire history.
 
-1. Open `http://RASPBERRY_PI_IP:8080`.
-2. Recording starts automatically; no manual Start/Stop button is shown.
-3. Open the `Recordings` tab.
-4. Click a clip to prepare browser playback and play it in the webpage.
+Cleanup checks every ten seconds and when recording stops or playback cache is prepared. It removes the oldest completed MP4 first and its associated HLS cache. It removes orphan cache directories too. Active MP4s are never unlinked while ffmpeg writes them. If an open segment is the only reason storage remains over budget, it is finalized, storage is reclaimed, and recording resumes if the cell is still occupied. Growth between checks can briefly exceed the budget. HLS preparation checks storage while it runs.
 
-You do not need to open the recordings folder for normal viewing.
-When a recording is selected, the server prepares an HLS playback cache from the 30-minute MP4. This does not reduce recording clarity; it remuxes the selected clip into browser-friendly chunks so the client still sees one playable 30-minute timeline.
+Recording status and storage usage are available at `/api/recording/status`. Settings report the fixed policy at `/api/settings`.
 
-## Storage estimate
-
-Your measured size is about 47 MiB per 5 minutes.
-
-```text
-47 MiB x 12 = about 564 MiB per hour
-564 MiB x 24 = about 13.2 GiB per day
-2 days = about 26.4 GiB
-```
-
-So a 64 GB high-endurance card can keep around 2 days, assuming the OS and free-space margin are managed.
-
-## Retention
-
-Use the `Keep recordings` selector on the preview page. The allowed choices are:
-
-```text
-1 day
-2 days
-```
-
-The maximum is capped at 2 days. The server deletes older MP4 clips automatically during normal use.
-
-Optional startup settings:
+Optional source/segment settings:
 
 ```bash
-RECORDING_SOURCE="rtsp://127.0.0.1:8554/pramacam" SEGMENT_SECONDS=1800 RETENTION_DAYS=2 PORT=8080 python3 server.py
+RECORDING_SOURCE="rtsp://127.0.0.1:8554/pramacam" SEGMENT_SECONDS=1800 PORT=8080 python3 server.py
 ```
+
+## Update an existing kiosk
+
+The occupancy/presence version is on the `feature/occupancy-recording-35gb` branch. From the existing repository on your Raspberry Pi/Radxa:
+
+```bash
+git fetch origin
+git switch feature/occupancy-recording-35gb
+git pull --ff-only origin feature/occupancy-recording-35gb
+sudo systemctl restart tm-camera-monitor.service
+```
+
+Refresh the browser after restarting. ESP32 firmware and reCamera flow sources are in `special_presence_programme/`; define camera roles in its Arduino sketch before uploading.
+
+Replace `server.py`, `app.js`, and `index.html` in the installed `TM_Seating_sanand` app folder with these updated versions. Keep the existing `recordings/` folder and camera/service configuration. Then restart the monitor and refresh the browser:
+
+```bash
+sudo systemctl restart tm-camera-monitor.service
+```
+
+No kiosk reinstall is required. The new storage cleanup takes effect when the updated server starts. Use the special ESP32 firmware if you want interior-presence corrections to trigger recording.
+
+## Validation
+
+Run `python3 -m unittest discover -s tests -v`. The tests cover presence-triggered recording, clear-delay stop, stale/malformed status, oldest-first storage reclamation, cache accounting, active-file protection, oversized-segment handling, and legacy-setting migration. If ffmpeg and ffprobe are installed, they also generate a synthetic camera source and verify playable MP4s after real segmentation and graceful stop. Camera/ESP32 integration still needs checking on the kiosk hardware.
 
 ## Requirements on Raspberry Pi
 

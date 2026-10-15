@@ -1,0 +1,42 @@
+KIOSK RECORDING UPDATE
+
+Updated app: Git repository root (../server.py, ../app.js, ../index.html).
+
+NEW BEHAVIOUR
+- Record when ESP32 effective occupancy is greater than zero. An inside-camera
+  presence correction from the special firmware triggers recording too.
+- Stop when effective occupancy is zero, interior detection is confirmed clear,
+  and the ESP32 vacancy-clear delay has ended. Finalize the MP4 gracefully.
+- Empty-cell live preview stays available without recording.
+- Long occupied visits are still segmented into 30-minute MP4s.
+- MQTT outages/stale data do not stop an already active recording.
+- Startup waits for a fresh positive count. Old retained MQTT status is ignored.
+- Archive budget: 35 GB (35,000,000,000 bytes), including playback cache/support files.
+- Delete oldest completed recordings and their cache first when space is needed.
+- No fixed one-day/two-day expiry. Historical clips stay until the size cap is reached.
+- Never unlink an active segment. If necessary, finalize it, reclaim space,
+  and resume recording while the cell remains occupied.
+- Budget checks run every 10 seconds and around stop/cache preparation. Storage can
+  briefly grow past the budget between checks; it is then reclaimed automatically.
+
+UPDATE AN EXISTING KIOSK
+Copy server.py, app.js, and index.html from the updated app into the EXISTING
+installed TM_Seating_sanand directory on your Raspberry Pi/Radxa.
+Keep its recordings/ directory, MediaMTX configuration, and service settings.
+As administrator on the kiosk host, run:
+
+  sudo systemctl restart tm-camera-monitor.service
+
+Refresh the kiosk browser to load the new JavaScript and recording-policy text.
+You do not need to run the kiosk installation scripts again for this update.
+On the next server start, size cleanup applies to existing recordings too.
+The packaged app includes installation scripts for a new installation if needed.
+
+MQTT source remains 192.168.10.1:1883, eagle/system/status. Use the special ESP32
+firmware for presence_override, presence_ready_for_empty and vacancy_clear_active.
+The older firmware can still trigger recordings by its normal occupancy count.
+
+VALIDATION
+10 automated tests passed, including real FFmpeg segmentation, graceful MP4
+finalization, ffprobe playback metadata checks, and HLS playback preparation.
+Live camera/MQTT/kiosk deployment remains to be verified on your hardware.
