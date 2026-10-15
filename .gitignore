@@ -9,3 +9,4 @@ special_presence_programme/.build/
 special_presence_programme/firmware_binary/
 special_presence_programme/esp32_presence/build/
 special_presence_programme/arduino-cli.yaml
+special_presence_programme/cell_6/build/

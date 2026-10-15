@@ -1,6 +1,13 @@
 SPECIAL PROGRAMME: MAX ENTRY / MAX EXIT + INSIDE CAMERA PRESENCE
 Version: ESP firmware 1.7.0-interior-presence
 
+CELL 6 FULL-SOURCE VERSION
+For the version preserving the complete user-supplied production programme, use
+cell_6/cell_6.ino (firmware 1.7.1-cell-6-interior-presence). Its inside/outside IDs
+must be set by the operator before uploading. See cell_6/README.txt and its exact
+reference_original.txt / changes.patch comparison. The earlier condensed sketch
+is retained below for history; Cell 6 is the full-source revision.
+
 FILES TO USE
   production_flow.json              Import on BOTH reCameras for normal operation.
   maintainance_flow.json            Import on each reCamera to configure its door/interior zones.

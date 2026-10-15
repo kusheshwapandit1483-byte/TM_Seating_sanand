@@ -1,0 +1,651 @@
+[
+    {
+        "id": "flow_maint",
+        "type": "tab",
+        "label": "Maintenance - Interior Presence Setup",
+        "disabled": false,
+        "info": "Maintenance V2. Polygon ROI defines the door area. In 'Set Count Line' mode, click an edge of the polygon to mark it as the entry/exit line. Choose whether the inside or outside area is ENTRY. Tracks crossing that edge with their bottom point are counted using the selected entry area.",
+        "env": []
+    },
+    {
+        "id": "sscma_client",
+        "type": "sscma",
+        "host": "localhost",
+        "mqttport": "1883",
+        "apiport": "80",
+        "clientid": "recamera",
+        "username": "",
+        "password": ""
+    },
+    {
+        "id": "ui_base",
+        "type": "ui-base",
+        "name": "reCamera Composite",
+        "path": "/dashboard",
+        "appIcon": "",
+        "includeClientData": true,
+        "acceptsClientConfig": [
+            "ui-notification",
+            "ui-control"
+        ],
+        "showPathInSidebar": false,
+        "headerContent": "page",
+        "navigationStyle": "default",
+        "titleBarStyle": "default",
+        "showReconnectNotification": true,
+        "notificationDisplayTime": 3,
+        "showDisconnectNotification": true
+    },
+    {
+        "id": "ui_theme",
+        "type": "ui-theme",
+        "name": "Dark",
+        "colors": {
+            "surface": "#1e1e1e",
+            "primary": "#2196F3",
+            "bgPage": "#121212",
+            "groupBg": "#181818",
+            "groupOutline": "#282828"
+        },
+        "sizes": {
+            "density": "compact",
+            "pagePadding": "8px",
+            "groupGap": "8px",
+            "groupBorderRadius": "4px",
+            "widgetGap": "4px"
+        }
+    },
+    {
+        "id": "page_roi",
+        "type": "ui-page",
+        "name": "ROI Setup",
+        "ui": "ui_base",
+        "path": "/",
+        "icon": "vector-rectangle",
+        "layout": "grid",
+        "theme": "ui_theme",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": 0,
+                "cols": 3
+            },
+            {
+                "name": "Tablet",
+                "px": 576,
+                "cols": 6
+            },
+            {
+                "name": "Desktop",
+                "px": 1024,
+                "cols": 12
+            }
+        ],
+        "order": 1,
+        "className": "",
+        "visible": "true",
+        "disabled": "false"
+    },
+    {
+        "id": "page_device",
+        "type": "ui-page",
+        "name": "Device",
+        "ui": "ui_base",
+        "path": "/device",
+        "icon": "cog",
+        "layout": "grid",
+        "theme": "ui_theme",
+        "breakpoints": [
+            {
+                "name": "Default",
+                "px": 0,
+                "cols": 3
+            },
+            {
+                "name": "Tablet",
+                "px": 576,
+                "cols": 6
+            },
+            {
+                "name": "Desktop",
+                "px": 1024,
+                "cols": 12
+            }
+        ],
+        "order": 2,
+        "className": "",
+        "visible": "true",
+        "disabled": "false"
+    },
+    {
+        "id": "group_roi",
+        "type": "ui-group",
+        "name": "ROI Editor",
+        "page": "page_roi",
+        "width": 12,
+        "height": 1,
+        "order": 1,
+        "showTitle": false,
+        "className": "",
+        "visible": true,
+        "disabled": false,
+        "groupType": "default"
+    },
+    {
+        "id": "group_device",
+        "type": "ui-group",
+        "name": "Device Identity",
+        "page": "page_device",
+        "width": 12,
+        "height": 1,
+        "order": 1,
+        "showTitle": false,
+        "className": "",
+        "visible": true,
+        "disabled": false,
+        "groupType": "default"
+    },
+    {
+        "id": "maint_inject",
+        "type": "inject",
+        "z": "flow_maint",
+        "name": "Startup",
+        "props": [
+            {
+                "p": "topic",
+                "vt": "str",
+                "v": "startup"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "1",
+        "topic": "startup",
+        "x": 110,
+        "y": 80,
+        "wires": [
+            [
+                "maint_init"
+            ]
+        ]
+    },
+    {
+        "id": "maint_init",
+        "type": "function",
+        "z": "flow_maint",
+        "name": "Init",
+        "func": "node.status({ fill: 'blue', shape: 'ring', text: 'Loading...' });\nreturn [\n    { filename: '/userdata/config/device_config.json' },\n    { filename: '/userdata/config/roi_config.json' }\n];",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 250,
+        "y": 80,
+        "wires": [
+            [
+                "maint_load_dev"
+            ],
+            [
+                "maint_load_roi"
+            ]
+        ]
+    },
+    {
+        "id": "maint_load_dev",
+        "type": "file in",
+        "z": "flow_maint",
+        "name": "Load Device Cfg",
+        "filename": "filename",
+        "filenameType": "msg",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": true,
+        "encoding": "utf8",
+        "allProps": false,
+        "x": 430,
+        "y": 40,
+        "wires": [
+            [
+                "maint_apply_dev"
+            ]
+        ]
+    },
+    {
+        "id": "maint_apply_dev",
+        "type": "function",
+        "z": "flow_maint",
+        "name": "Apply Device",
+        "func": "try {\n    const cfg = typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;\n    if (cfg && cfg.device_id) {\n        global.set('device_config', cfg);\n        node.status({ fill: 'green', shape: 'dot', text: cfg.device_id });\n    }\n} catch(e) {\n    node.warn('Device config parse: ' + e.message);\n}\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 620,
+        "y": 40,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "maint_load_roi",
+        "type": "file in",
+        "z": "flow_maint",
+        "name": "Load ROI Cfg",
+        "filename": "filename",
+        "filenameType": "msg",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": true,
+        "encoding": "utf8",
+        "allProps": false,
+        "x": 430,
+        "y": 120,
+        "wires": [
+            [
+                "maint_apply_roi"
+            ]
+        ]
+    },
+    {
+        "id": "maint_apply_roi",
+        "type": "function",
+        "z": "flow_maint",
+        "name": "Apply ROI",
+        "func": "try {\n    const cfg = typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;\n    let final = null;\n    if (cfg && Array.isArray(cfg.polygon) && cfg.polygon.length >= 3) {\n        const entryArea = cfg.entry_area === 'outside' ? 'outside' : 'inside';\n        final = {\n            polygon: cfg.polygon,\n            count_edge_index: typeof cfg.count_edge_index === 'number' ? cfg.count_edge_index : -1,\n            entry_area: entryArea,\n            masks: Array.isArray(cfg.masks) ? cfg.masks : []\n        };\n    } else if (cfg && Array.isArray(cfg.rect) && cfg.rect.length === 4) {\n        const x1 = cfg.rect[0], y1 = cfg.rect[1], x2 = cfg.rect[2], y2 = cfg.rect[3];\n        const polygon = [[x1,y1],[x2,y1],[x2,y2],[x1,y2]];\n        const edgeMap = { top: 0, right: 1, bottom: 2, left: 3 };\n        const idx = (typeof edgeMap[cfg.count_edge] === 'number') ? edgeMap[cfg.count_edge] : 2;\n        final = { polygon: polygon, count_edge_index: idx, entry_area: cfg.entry_area === 'outside' ? 'outside' : 'inside', masks: Array.isArray(cfg.masks) ? cfg.masks : [] };\n    }\n    if (final) {\n        final.presence_polygon = Array.isArray(cfg.presence_polygon) ? cfg.presence_polygon : [];\n        global.set('roi_config', final);\n        node.status({ fill: 'green', shape: 'dot', text: 'ROI loaded (edge ' + final.count_edge_index + ')' });\n    } else {\n        global.set('roi_config', { polygon: [], count_edge_index: -1, entry_area: 'inside', masks: [] });\n        node.status({ fill: 'yellow', shape: 'ring', text: 'no ROI yet' });\n    }\n} catch(e) {\n    global.set('roi_config', { polygon: [], count_edge_index: -1, entry_area: 'inside', masks: [] });\n    node.warn('ROI parse: ' + e.message);\n}\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 620,
+        "y": 120,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "maint_catch",
+        "type": "catch",
+        "z": "flow_maint",
+        "name": "Catch",
+        "scope": [
+            "maint_load_dev",
+            "maint_load_roi"
+        ],
+        "uncaught": false,
+        "x": 440,
+        "y": 180,
+        "wires": [
+            [
+                "maint_err"
+            ]
+        ]
+    },
+    {
+        "id": "maint_err",
+        "type": "function",
+        "z": "flow_maint",
+        "name": "Err",
+        "func": "const src = msg.error ? msg.error.source : {};\nconst errMsg = msg.error ? msg.error.message : 'unknown error';\nif (src && src.id === 'maint_load_roi') {\n    global.set('roi_config', { polygon: [], count_edge_index: -1, entry_area: 'inside', masks: [] });\n    node.status({ fill: 'yellow', shape: 'ring', text: 'no ROI yet' });\n}\nif (src && src.id === 'maint_load_dev') {\n    global.set('device_config', { device_id: '', door_label: '' });\n    node.status({ fill: 'yellow', shape: 'ring', text: 'no device cfg' });\n}\nif (src && (src.id === 'file_write_binary' || src.id === 'file_write')) {\n    node.status({ fill: 'red', shape: 'ring', text: 'file write failed' });\n    return { topic: 'capture_error', payload: { error: errMsg, source: src.name || src.id } };\n}\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 590,
+        "y": 180,
+        "wires": [
+            [
+                "roi_editor"
+            ]
+        ]
+    },
+    {
+        "id": "maint_camera",
+        "type": "camera",
+        "z": "flow_maint",
+        "name": "",
+        "client": "sscma_client",
+        "audio": false,
+        "volume": "50",
+        "option": "0",
+        "fps": "15",
+        "mirror": true,
+        "flip": false,
+        "x": 110,
+        "y": 280,
+        "wires": [
+            [
+                "maint_model"
+            ]
+        ]
+    },
+    {
+        "id": "maint_model",
+        "type": "model",
+        "z": "flow_maint",
+        "name": "Person Detect - Custom Model",
+        "uri": "/userdata/models/person_only.cvimodel",
+        "model": "Custom YOLO Detection",
+        "tscore": "0.4",
+        "tiou": "0.4",
+        "debug": false,
+        "trace": false,
+        "counting": false,
+        "draw": true,
+        "classes": "person",
+        "splitter": "0,0,0,0",
+        "previewResolution": "640x640",
+        "previewFps": "30",
+        "client": "sscma_client",
+        "x": 280,
+        "y": 280,
+        "wires": [
+            [
+                "maint_passthru"
+            ]
+        ]
+    },
+    {
+        "id": "maint_passthru",
+        "type": "function",
+        "z": "flow_maint",
+        "name": "Keep Custom Human Model Running - V2",
+        "func": "// Maintenance V2: custom person model runs continuously; ROI dashboard filters and counts person only.\nnode.status({ fill: 'green', shape: 'dot', text: 'custom human model running v2' });\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 470,
+        "y": 280,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "device_panel",
+        "type": "ui-template",
+        "z": "flow_maint",
+        "group": "group_device",
+        "page": "",
+        "ui": "",
+        "name": "Device Identity Panel",
+        "order": 1,
+        "width": 12,
+        "height": 12,
+        "head": "",
+        "format": "<template>\n  <div class=\"dev-panel\">\n    <div class=\"section\">\n      <div class=\"title\">DEVICE IDENTITY</div>\n      <v-text-field v-model=\"deviceId\" label=\"Device ID (e.g. TM_R1_01)\" density=\"compact\" variant=\"outlined\" hide-details class=\"mb-3\"></v-text-field>\n      <v-text-field v-model=\"doorLabel\" label=\"Door Label (e.g. E1)\" density=\"compact\" variant=\"outlined\" hide-details class=\"mb-3\"></v-text-field>\n      <v-btn color=\"primary\" @click=\"save\" :disabled=\"!deviceId\">Save Device Config</v-btn>\n      <div v-if=\"saved\" class=\"saved-msg\">Saved.</div>\n    </div>\n    <div class=\"section info\">\n      <div class=\"title\">EXPECTED IDS (per Hub roster)</div>\n      <div class=\"info-row\"><span class=\"info-key\">Door E1</span><span class=\"info-val\">TM_R1_01</span></div>\n      <div class=\"info-row\"><span class=\"info-key\">Door E1</span><span class=\"info-val\">TM_R1_02</span></div>\n      <div class=\"hint\">Use these IDs exactly â€” the ESP32 hub roster is hardcoded.</div>\n    </div>\n  </div>\n</template>\n\n<script>\nexport default {\n  data() {\n    return { deviceId: '', doorLabel: '', saved: false }\n  },\n  watch: {\n    msg(m) {\n      if (m && m.topic === 'device_loaded' && m.payload) {\n        this.deviceId = m.payload.device_id || '';\n        this.doorLabel = m.payload.door_label || '';\n      }\n    }\n  },\n  mounted() { this.send({ topic: 'get_device' }); },\n  methods: {\n    save() {\n      this.saved = false;\n      this.send({ topic: 'save_device', payload: { device_id: this.deviceId.trim(), door_label: this.doorLabel.trim() } });\n      this.saved = true;\n      setTimeout(() => { this.saved = false }, 2000);\n    }\n  }\n}\n</script>\n\n<style scoped>\n.dev-panel { padding: 16px; display: flex; gap: 16px; flex-wrap: wrap; }\n.section { background: #1e1e1e; border-radius: 8px; padding: 18px; flex: 1; min-width: 280px; }\n.title { font-size: 11px; color: #888; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 12px; }\n.saved-msg { margin-top: 10px; color: #4caf50; font-size: 13px; }\n.info-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #2a2a2a; font-size: 13px; }\n.info-key { color: #888; } .info-val { color: #fff; font-family: monospace; }\n.hint { font-size: 11px; color: #666; margin-top: 12px; line-height: 1.5; }\n</style>",
+        "storeOutMessages": true,
+        "passthru": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 470,
+        "y": 480,
+        "wires": [
+            [
+                "device_backend"
+            ]
+        ]
+    },
+    {
+        "id": "device_backend",
+        "type": "function",
+        "z": "flow_maint",
+        "name": "Device Backend",
+        "func": "if (msg.topic === 'get_device') {\n    const cfg = global.get('device_config') || { device_id: '', door_label: '' };\n    return [{ topic: 'device_loaded', payload: cfg }, null];\n}\nif (msg.topic === 'save_device') {\n    const cfg = msg.payload || {};\n    if (!cfg.device_id) return null;\n    global.set('device_config', cfg);\n    node.status({ fill: 'green', shape: 'dot', text: 'Saved ' + cfg.device_id });\n    return [null, {\n        filename: '/userdata/config/device_config.json',\n        payload: JSON.stringify(cfg, null, 2)\n    }];\n}\nreturn null;",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 670,
+        "y": 480,
+        "wires": [
+            [
+                "device_panel"
+            ],
+            [
+                "file_write"
+            ]
+        ]
+    },
+    {
+        "id": "roi_editor",
+        "type": "ui-template",
+        "z": "flow_maint",
+        "group": "group_roi",
+        "page": "",
+        "ui": "",
+        "name": "ROI Editor",
+        "order": 1,
+        "width": 12,
+        "height": 28,
+        "head": "",
+        "format": "<template>\n  <div class=\"roi-panel\">\n    <div class=\"left\">\n      <div class=\"canvas-header\">\n        <span class=\"canvas-title\">CAMERA VIEW</span>\n        <v-chip v-if=\"wsConnected\" size=\"small\" color=\"success\" variant=\"flat\">LIVE</v-chip>\n        <v-chip v-else size=\"small\" color=\"warning\" variant=\"flat\">OFFLINE</v-chip>\n        <v-btn size=\"small\" color=\"primary\" variant=\"flat\" @click=\"toggleWS\">{{ wsConnected ? 'Stop' : 'Start Live' }}</v-btn>\n      </div>\n      <div class=\"canvas-container\">\n        <canvas ref=\"bgCanvas\" width=\"640\" height=\"480\" class=\"bg\"></canvas>\n        <canvas ref=\"canvas\" width=\"640\" height=\"480\" @click=\"onClick\" @contextmenu.prevent=\"onRightClick\" @mousemove=\"onMove\" class=\"overlay\"></canvas>\n        <div class=\"coords\">{{mouse.x>=0?(mouse.x+', '+mouse.y):'-'}}</div>\n      </div>\n      <div class=\"toolbar\">\n        <v-btn-toggle v-model=\"mode\" mandatory color=\"primary\" density=\"compact\">\n          <v-btn value=\"poly\" size=\"small\">Draw ROI</v-btn>\n          <v-btn value=\"line\" size=\"small\">Set Count Line</v-btn>\n          <v-btn value=\"mask\" size=\"small\">Mask Polygon</v-btn>\n          <v-btn value=\"presence\" size=\"small\">Interior Zone</v-btn>\n          <v-btn value=\"none\" size=\"small\">View</v-btn>\n        </v-btn-toggle>\n        <v-chip size=\"small\" :color=\"polygon.length>=3?'success':'warning'\" variant=\"flat\">{{ polygon.length>=3 ? 'ROI: '+polygon.length+' pts' : 'No ROI' }}</v-chip>\n        <v-chip size=\"small\" :color=\"countEdgeIndex>=0?'success':'warning'\" variant=\"flat\">{{ countEdgeIndex>=0 ? 'Count edge: #'+(countEdgeIndex+1) : 'No count line' }}</v-chip>\n        <v-chip size=\"small\" color=\"success\" variant=\"flat\">Entry: {{ entryAreaLabel }}</v-chip>\n        <v-chip size=\"small\" color=\"info\" variant=\"flat\">{{ masks.length }} masks</v-chip>\n      </div>\n    </div>\n    <div class=\"right\">\n      <div class=\"section count-section\">\n        <div class=\"title\">LOCAL TEST COUNT</div>\n        <div class=\"count-grid\">\n          <div><span>Occupancy</span><strong>{{ localCount.occupancy }}</strong></div>\n          <div><span>Entries</span><strong>{{ localCount.entries }}</strong></div>\n          <div><span>Exits</span><strong>{{ localCount.exits }}</strong></div>\n          <div><span>Tracks</span><strong>{{ localCount.tracks.length }}</strong></div>\n          <div><span>Detections</span><strong>{{ localCount.detections }}</strong></div>\n          <div><span>In ROI</span><strong>{{ localCount.inRoi }}</strong></div>\n        </div>\n        <div class=\"info-row\"><span>Last event</span><span class=\"mono\">{{ localCount.lastEvent }}</span></div>\n        <v-btn size=\"small\" color=\"warning\" variant=\"tonal\" @click=\"resetLocalCount\">Reset Test Count</v-btn>\n      </div>\n      <div class=\"section capture-section\">\n        <div class=\"title\">TRAINING IMAGES</div>\n        <v-text-field v-model=\"captureLabel\" label=\"Folder / label\" density=\"compact\" variant=\"outlined\" hide-details class=\"mb-2\"></v-text-field>\n        <div class=\"btn-row\">\n          <v-btn size=\"small\" color=\"success\" variant=\"flat\" @click=\"captureImage\" :disabled=\"!lastImage\">Capture Frame</v-btn>\n          <v-btn size=\"small\" color=\"info\" variant=\"tonal\" @click=\"startBurstCapture\" :disabled=\"!lastImage || !!captureTimer\">Burst 30 Frames</v-btn>\n          <v-btn size=\"small\" color=\"warning\" variant=\"tonal\" @click=\"stopBurstCapture\" :disabled=\"!captureTimer\">Stop</v-btn>\n        </div>\n        <div class=\"btn-row\">\n          <v-btn size=\"small\" color=\"secondary\" variant=\"tonal\" @click=\"startPreviewRecording\" :disabled=\"!lastImage || recording\">Record Preview</v-btn>\n          <v-btn size=\"small\" color=\"error\" variant=\"tonal\" @click=\"stopPreviewRecording\" :disabled=\"!recording\">Stop & Download</v-btn>\n        </div>\n        <div class=\"btn-row\">\n          <v-btn size=\"small\" color=\"primary\" variant=\"tonal\" @click=\"createFolderArchive\">Create Folder Archive</v-btn>\n          <v-btn v-if=\"archiveUrl\" size=\"small\" color=\"success\" variant=\"flat\" :href=\"archiveUrl\" target=\"_blank\">Download Archive</v-btn>\n        </div>\n        <div class=\"hint\">Saved on camera under /userdata/training_images/{{ captureLabel || 'person' }}/. Browser recording downloads a .webm to this computer.</div>\n        <div v-if=\"captureTimer\" class=\"saved-msg\">Burst capturing: {{ captureRemaining }} left</div>\n        <div v-if=\"captureMsg\" class=\"saved-msg\">{{ captureMsg }}</div>\n        <div v-if=\"archiveMsg\" class=\"saved-msg\">{{ archiveMsg }}</div>\n      </div>\n      <div class=\"section\">\n        <div class=\"title\">ROI POLYGON ({{ polygon.length }} pts)</div>\n        <div class=\"hint\">Draw ROI mode: left-click to add points (need 3+), right-click to undo, then Save. Polygon = the door area. Inside polygon = inside the door.</div>\n        <div v-if=\"polyDrawing.length\" class=\"info-row\"><span>Drawing</span><span>{{ polyDrawing.length }} pts</span></div>\n        <div class=\"btn-row\">\n          <v-btn size=\"small\" color=\"success\" variant=\"flat\" @click=\"savePolygon\" :disabled=\"polyDrawing.length<3\">Save ROI Polygon</v-btn>\n          <v-btn size=\"small\" variant=\"tonal\" @click=\"cancelPolyDrawing\" :disabled=\"!polyDrawing.length\">Cancel</v-btn>\n          <v-btn v-if=\"polygon.length\" size=\"small\" color=\"warning\" variant=\"tonal\" @click=\"clearPolygon\">Clear ROI</v-btn>\n        </div>\n      </div>\n      <div class=\"section\">\n        <div class=\"title\">COUNT LINE</div>\n        <div class=\"hint\">Set Count Line mode: click an edge of the saved polygon, then choose which area should count as entry.</div>\n        <v-btn-toggle v-model=\"entryArea\" mandatory color=\"primary\" density=\"compact\" class=\"mb-2\" @update:model-value=\"resetLocalCount\">\n          <v-btn value=\"inside\" size=\"small\">Inside = Entry</v-btn>\n          <v-btn value=\"outside\" size=\"small\">Outside = Entry</v-btn>\n        </v-btn-toggle>\n        <div class=\"info-row\"><span>Entry direction</span><span class=\"mono\">{{ entryAreaLabel }} = ENTRY, {{ exitAreaLabel }} = EXIT</span></div>\n        <div v-if=\"countEdgeIndex>=0 && polygon.length>=3\" class=\"info-row\">\n          <span>Edge</span>\n          <span class=\"mono\">#{{ countEdgeIndex+1 }} : ({{ polygon[countEdgeIndex][0] }},{{ polygon[countEdgeIndex][1] }}) -> ({{ polygon[(countEdgeIndex+1)%polygon.length][0] }},{{ polygon[(countEdgeIndex+1)%polygon.length][1] }})</span>\n        </div>\n        <div v-else class=\"empty\">No count line selected. Switch to \"Set Count Line\" mode and click an edge.</div>\n      </div>\n      <div class=\"section\">\n        <div class=\"title\">REFLECTION MASKS ({{masks.length}})</div>\n        <div class=\"hint\">Mask Polygon mode: click points (need 3+), right-click to undo. Masks block out reflections from being counted.</div>\n        <div v-if=\"maskDrawing.length\" class=\"info-row\"><span>Drawing</span><span>{{maskDrawing.length}} pts</span></div>\n        <div class=\"btn-row\">\n          <v-btn size=\"small\" color=\"success\" variant=\"flat\" @click=\"saveMask\" :disabled=\"maskDrawing.length<3\">Save Mask</v-btn>\n          <v-btn size=\"small\" variant=\"tonal\" @click=\"cancelMaskDrawing\" :disabled=\"!maskDrawing.length\">Cancel</v-btn>\n        </div>\n        <div class=\"mask-list\">\n          <div v-for=\"(m,i) in masks\" :key=\"i\" class=\"mask-item\">\n            <span>Mask {{i+1}} ({{m.length}} pts)</span>\n            <v-btn icon size=\"x-small\" variant=\"text\" color=\"error\" @click=\"deleteMask(i)\"><v-icon size=\"small\">mdi-delete</v-icon></v-btn>\n          </div>\n          <div v-if=\"!masks.length\" class=\"empty\">No masks defined.</div>\n        </div>\n      </div>\n      <div class=\"section\">\n        <div class=\"title\">CELL INTERIOR PRESENCE ZONE</div>\n        <div class=\"hint\">For the INSIDE camera: draw the visible cell interior in Interior Zone mode. Presence requires a person outside the door ROI for more than 2 seconds. Door detections prevent premature clearing. ESP32 chooses which camera is inside. An empty zone uses the whole unmasked view outside the door ROI.</div>\n        <div class=\"info-row\"><span>Saved zone</span><span>{{ presencePolygon.length }} points</span></div>\n        <div class=\"btn-row\">\n          <v-btn size=\"small\" color=\"success\" @click=\"savePresenceZone\" :disabled=\"presenceDrawing.length<3\">Use Interior Zone</v-btn>\n          <v-btn size=\"small\" color=\"warning\" @click=\"clearPresenceZone\">Use Whole View</v-btn>\n        </div>\n        <div class=\"hint\">Finish with Save ROI Config. Avoid including the corridor through the doorway.</div>\n      </div>\n      <div class=\"section save-section\">\n        <v-btn block color=\"primary\" size=\"large\" @click=\"saveAll\" :disabled=\"polygon.length<3 || countEdgeIndex<0\">Save ROI Config</v-btn>\n        <div v-if=\"savedMsg\" class=\"saved-msg\">{{ savedMsg }}</div>\n      </div>\n    </div>\n  </div>\n</template>\n\n<script>\nexport default {\n  data() {\n    return {\n      W: 640, H: 480,\n      mode: 'poly',\n      polygon: [],\n      polyDrawing: [],\n      countEdgeIndex: -1,\n      entryArea: 'inside',\n      masks: [],\n      presencePolygon: [],\n      presenceDrawing: [],\n      maskDrawing: [],\n      mouse: {x: -1, y: -1},\n      ctx: null, bgCtx: null,\n      ws: null, wsConnected: false,\n      socketURL: `ws://${window.location.hostname}:8090`,\n      imgObj: null, streamW: 640, streamH: 640,\n      detections: [],\n      localCount: { entries: 0, exits: 0, occupancy: 0, tracks: [], nextId: 1, frame: 0, detections: 0, inRoi: 0, lastEvent: '-', recentEvents: [], tune: { iouMatchThreshold: 0.10, distMatchPx: 200, posSmoothingAlpha: 0.4, trackConfirmHits: 3, trackMaxAge: 30, stateWindowFrames: 5, minStateDwellFrames: 8, perpVelocityMinPx: 8, perpVelocityWindowFrames: 5, regionCooldownPx: 60, regionCooldownFrames: 30, minDetConfidence: 0.45, inferenceLookbackFrames: 60, inferenceParallelMaxPx: 50 } },\n      lastImage: '',\n      captureLabel: 'person',\n      captureMsg: '',\n      captureTimer: null,\n      captureRemaining: 0,\n      mediaRecorder: null,\n      recordChunks: [],\n      recording: false,\n      archiveMsg: '',\n      archiveUrl: '',\n      savedMsg: ''\n    }\n  },\n  computed: {\n    bgScale() { return Math.min(this.W / this.streamW, this.H / this.streamH); },\n    bgOffsetX() { return (this.W - this.streamW * this.bgScale) / 2; },\n    bgOffsetY() { return (this.H - this.streamH * this.bgScale) / 2; },\n    entryAreaLabel() { return this.entryArea === 'outside' ? 'Outside area' : 'Inside area'; },\n    exitAreaLabel() { return this.entryArea === 'outside' ? 'Inside area' : 'Outside area'; }\n  },\n  watch: {\n    msg(m) {\n      if (!m) return;\n      if (m.topic === 'roi_loaded' && m.payload) {\n        const cfg = m.payload;\n        this.polygon = Array.isArray(cfg.polygon) ? cfg.polygon.map(p => [p[0], p[1]]) : [];\n        this.countEdgeIndex = (typeof cfg.count_edge_index === 'number' && cfg.count_edge_index >= 0 && cfg.count_edge_index < this.polygon.length) ? cfg.count_edge_index : -1;\n        this.entryArea = cfg.entry_area === 'outside' ? 'outside' : 'inside';\n        this.masks = (cfg.masks || []).slice();\n        this.presencePolygon = (cfg.presence_polygon || []).map(p => [p[0], p[1]]);\n        this.draw();\n      }\n      if (m.topic === 'capture_saved' && m.payload) {\n        const filename = m.payload.filename || '';\n        this.captureMsg = 'Saved: ' + (filename.split('/').pop() || filename || 'image');\n      }\n      if (m.topic === 'capture_error' && m.payload) {\n        this.captureMsg = 'Capture failed: ' + (m.payload.error || 'unknown error');\n      }\n      if (m.topic === 'archive_ready' && m.payload) {\n        const filename = m.payload.filename || '';\n        this.archiveUrl = m.payload.url || '';\n        this.archiveMsg = 'Archive ready: ' + (filename.split('/').pop() || filename || 'archive');\n      }\n      if (m.topic === 'archive_error' && m.payload) {\n        this.archiveUrl = '';\n        this.archiveMsg = 'Archive failed: ' + (m.payload.error || 'unknown error');\n      }\n    }\n  },\n  mounted() {\n    this.$nextTick(() => {\n      this.ctx = this.$refs.canvas.getContext('2d');\n      this.bgCtx = this.$refs.bgCanvas.getContext('2d');\n      this.imgObj = new Image();\n      this.imgObj.onload = () => { this.drawBg(); this.draw(); };\n      this.send({ topic: 'get_roi' });\n      this.initWS();\n    });\n  },\n  unmounted() {\n    this.stopBurstCapture();\n    if (this.mediaRecorder && this.recording) this.stopPreviewRecording();\n    this.closeWS();\n  },\n  methods: {\n    displayToModel(x, y) {\n      return [\n        Math.round((x - this.bgOffsetX) / this.bgScale),\n        Math.round((y - this.bgOffsetY) / this.bgScale)\n      ];\n    },\n    modelToDisplay(mx, my) {\n      return [\n        Math.round(mx * this.bgScale + this.bgOffsetX),\n        Math.round(my * this.bgScale + this.bgOffsetY)\n      ];\n    },\n    inPoly(pt, poly) {\n      let inside = false;\n      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {\n        const xi = poly[i][0], yi = poly[i][1];\n        const xj = poly[j][0], yj = poly[j][1];\n        if (((yi > pt.y) !== (yj > pt.y)) && (pt.x < (xj - xi) * (pt.y - yi) / (yj - yi) + xi)) inside = !inside;\n      }\n      return inside;\n    },\n    segIntersect(p1, p2, p3, p4) {\n      const d = (p2.x - p1.x) * (p4.y - p3.y) - (p2.y - p1.y) * (p4.x - p3.x);\n      if (Math.abs(d) < 1e-9) return false;\n      const t = ((p3.x - p1.x) * (p4.y - p3.y) - (p3.y - p1.y) * (p4.x - p3.x)) / d;\n      const u = ((p3.x - p1.x) * (p2.y - p1.y) - (p3.y - p1.y) * (p2.x - p1.x)) / d;\n      return t >= 0 && t <= 1 && u >= 0 && u <= 1;\n    },\n    pointToSegmentDist(p, a, b) {\n      const dx = b.x - a.x, dy = b.y - a.y;\n      if (dx === 0 && dy === 0) return Math.hypot(p.x - a.x, p.y - a.y);\n      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx*dx + dy*dy)));\n      return Math.hypot(p.x - (a.x + t*dx), p.y - (a.y + t*dy));\n    },\n    eventForArea(inside) {\n      const entryIsInside = this.entryArea !== 'outside';\n      return inside === entryIsInside ? 'ENTRY' : 'EXIT';\n    },\n    resetLocalCount() {\n      this.localCount = { entries: 0, exits: 0, occupancy: 0, tracks: [], nextId: 1, frame: 0, detections: 0, inRoi: 0, lastEvent: '-', recentEvents: [], tune: { iouMatchThreshold: 0.10, distMatchPx: 200, posSmoothingAlpha: 0.4, trackConfirmHits: 3, trackMaxAge: 30, stateWindowFrames: 5, minStateDwellFrames: 8, perpVelocityMinPx: 8, perpVelocityWindowFrames: 5, regionCooldownPx: 60, regionCooldownFrames: 30, minDetConfidence: 0.45, inferenceLookbackFrames: 60, inferenceParallelMaxPx: 80 } };\n    },\n    captureImage() {\n      if (!this.lastImage) {\n        this.captureMsg = 'No live frame yet.';\n        return;\n      }\n      const label = (this.captureLabel || 'person').trim() || 'person';\n      this.captureMsg = 'Saving...';\n      this.send({\n        topic: 'save_training_image',\n        payload: {\n          image: this.lastImage,\n          label,\n          polygon: this.polygon,\n          count_edge_index: this.countEdgeIndex,\n          entry_area: this.entryArea\n        }\n      });\n    },\n    startBurstCapture() {\n      if (!this.lastImage || this.captureTimer) return;\n      this.captureRemaining = 30;\n      this.captureMsg = 'Burst started.';\n      this.captureTimer = setInterval(() => {\n        if (!this.lastImage || this.captureRemaining <= 0) {\n          this.stopBurstCapture();\n          return;\n        }\n        this.captureImage();\n        this.captureRemaining -= 1;\n        if (this.captureRemaining <= 0) this.stopBurstCapture();\n      }, 250);\n    },\n    stopBurstCapture() {\n      if (this.captureTimer) {\n        clearInterval(this.captureTimer);\n        this.captureTimer = null;\n      }\n      this.captureRemaining = 0;\n    },\n    createFolderArchive() {\n      const label = (this.captureLabel || 'person').trim() || 'person';\n      this.archiveUrl = '';\n      this.archiveMsg = 'Creating archive...';\n      this.send({ topic: 'archive_training_folder', payload: { label } });\n    },\n    startPreviewRecording() {\n      const canvas = this.$refs.bgCanvas;\n      if (!canvas || !canvas.captureStream || typeof MediaRecorder === 'undefined') {\n        this.captureMsg = 'Browser recording is not supported here.';\n        return;\n      }\n      if (this.recording) return;\n      const stream = canvas.captureStream(15);\n      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';\n      this.recordChunks = [];\n      this.mediaRecorder = new MediaRecorder(stream, { mimeType });\n      this.mediaRecorder.ondataavailable = (event) => {\n        if (event.data && event.data.size > 0) this.recordChunks.push(event.data);\n      };\n      this.mediaRecorder.onstop = () => {\n        const blob = new Blob(this.recordChunks, { type: mimeType });\n        const label = (this.captureLabel || 'preview').trim().replace(/[^a-zA-Z0-9_-]/g, '_') || 'preview';\n        const ts = new Date().toISOString().replace(/[:.]/g, '-');\n        const url = URL.createObjectURL(blob);\n        const a = document.createElement('a');\n        a.href = url;\n        a.download = label + '_' + ts + '.webm';\n        document.body.appendChild(a);\n        a.click();\n        a.remove();\n        setTimeout(() => URL.revokeObjectURL(url), 5000);\n        stream.getTracks().forEach(track => track.stop());\n        this.mediaRecorder = null;\n        this.recording = false;\n        this.captureMsg = 'Downloaded browser recording.';\n      };\n      this.mediaRecorder.start();\n      this.recording = true;\n      this.captureMsg = 'Recording preview...';\n    },\n    stopPreviewRecording() {\n      if (this.mediaRecorder && this.recording) this.mediaRecorder.stop();\n    },\n    updateLocalCount() {\n      // SORT-lite tracker (IoU + Hungarian-greedy + EMA smoothing) with dwell-time\n      // hysteresis, perpendicular-velocity gate, and region cooldown for counting.\n      const local = this.localCount;\n      const poly = this.polygon;\n      const T = local.tune;\n      if (poly.length < 3 || this.countEdgeIndex < 0 || this.countEdgeIndex >= poly.length) {\n        local.detections = this.detections.length;\n        local.inRoi = 0;\n        return;\n      }\n      const N = poly.length;\n      const edgeStart = { x: poly[this.countEdgeIndex][0], y: poly[this.countEdgeIndex][1] };\n      const edgeEnd = { x: poly[(this.countEdgeIndex+1) % N][0], y: poly[(this.countEdgeIndex+1) % N][1] };\n      const eDx = edgeEnd.x - edgeStart.x, eDy = edgeEnd.y - edgeStart.y;\n      const eLen = Math.hypot(eDx, eDy) || 1;\n      // Edge direction unit vector (along count line) and perpendicular normal.\n      const lineDir = { x: eDx / eLen, y: eDy / eLen };\n      const nrm = { x: -eDy / eLen, y: eDx / eLen };\n      // Compute inward normal (which side of the line is INSIDE the polygon).\n      // Use polygon centroid: whichever sign of nrm dot (centroid - edge_mid) > 0.\n      let _cx = 0, _cy = 0;\n      for (const _p of poly) { _cx += _p[0]; _cy += _p[1]; }\n      _cx /= N; _cy /= N;\n      const _emx = (edgeStart.x + edgeEnd.x) / 2;\n      const _emy = (edgeStart.y + edgeEnd.y) / 2;\n      const _inwardSign = ((_cx - _emx) * nrm.x + (_cy - _emy) * nrm.y) > 0 ? 1 : -1;\n      const inwardNormal = { x: nrm.x * _inwardSign, y: nrm.y * _inwardSign };\n\n      // 1. Filter detections by confidence and reflection masks.\n      const dets = [];\n      for (const d of this.detections) {\n        if ((d.score == null ? 1.0 : d.score) < T.minDetConfidence) continue;\n        let masked = false;\n        for (const m of this.masks) {\n          if (Array.isArray(m) && m.length >= 3 && this.inPoly({ x: d.x, y: d.y }, m)) { masked = true; break; }\n        }\n        if (masked) continue;\n        const bx = (d.boxX != null ? d.boxX : d.x);\n        const by = (d.boxY != null ? d.boxY : d.y);\n        dets.push({\n          foot: { x: d.x, y: d.y },\n          box: { x: bx, y: by, w: d.w || 0, h: d.h || 0 },\n          score: d.score == null ? 1.0 : d.score\n        });\n      }\n\n      local.frame += 1;\n      local.detections = dets.length;\n\n      // Presence trail: every detection's foot point + inside flag, kept\n      // for inferenceLookbackFrames so we can detect crossings the tracker missed.\n      local.presenceTrail = (local.presenceTrail || []).filter(e => local.frame - e.frame < T.inferenceLookbackFrames);\n      for (const _d of dets) {\n        local.presenceTrail.push({\n          x: _d.foot.x, y: _d.foot.y, frame: local.frame,\n          inside: this.inPoly({ x: _d.foot.x, y: _d.foot.y }, poly)\n        });\n      }\n\n      // 2. IoU-based association. Greedy by descending IoU.\n      const iou = (a, b) => {\n        const ax1 = a.x - a.w/2, ay1 = a.y - a.h/2, ax2 = a.x + a.w/2, ay2 = a.y + a.h/2;\n        const bx1 = b.x - b.w/2, by1 = b.y - b.h/2, bx2 = b.x + b.w/2, by2 = b.y + b.h/2;\n        const ix1 = Math.max(ax1, bx1), iy1 = Math.max(ay1, by1);\n        const ix2 = Math.min(ax2, bx2), iy2 = Math.min(ay2, by2);\n        const iw = Math.max(0, ix2 - ix1), ih = Math.max(0, iy2 - iy1);\n        const inter = iw * ih;\n        const aArea = Math.max(1, a.w * a.h), bArea = Math.max(1, b.w * b.h);\n        return inter / (aArea + bArea - inter + 1e-9);\n      };\n      const pairs = [];\n      for (let ti = 0; ti < local.tracks.length; ti++) {\n        for (let di = 0; di < dets.length; di++) {\n          const v = iou(local.tracks[ti].box, dets[di].box);\n          if (v >= T.iouMatchThreshold) pairs.push({ ti, di, score: v });\n        }\n      }\n      pairs.sort((a, b) => b.score - a.score);\n      const usedT = new Set(), usedD = new Set();\n      const matches = [];\n      for (const p of pairs) {\n        if (usedT.has(p.ti) || usedD.has(p.di)) continue;\n        usedT.add(p.ti); usedD.add(p.di);\n        matches.push([p.ti, p.di]);\n      }\n      // 3. Distance fallback for unmatched tracks (handles brand-new boxes\n      // where IoU=0 because the prior box drifted away).\n      for (let ti = 0; ti < local.tracks.length; ti++) {\n        if (usedT.has(ti)) continue;\n        let bestDi = -1, bestDist = T.distMatchPx;\n        for (let di = 0; di < dets.length; di++) {\n          if (usedD.has(di)) continue;\n          const d = Math.hypot(local.tracks[ti].foot.x - dets[di].foot.x, local.tracks[ti].foot.y - dets[di].foot.y);\n          if (d < bestDist) { bestDist = d; bestDi = di; }\n        }\n        if (bestDi >= 0) { usedT.add(ti); usedD.add(bestDi); matches.push([ti, bestDi]); }\n      }\n\n      // 4. Update matched tracks with EMA-smoothed box+foot, push history.\n      // Track framesSinceLastMatch for occlusion-aware validation later.\n      const a = T.posSmoothingAlpha;\n      for (const m of matches) {\n        const t = local.tracks[m[0]], d = dets[m[1]];\n        t.recoveredFromOcclusion = (t.framesSinceLastMatch || 0) >= 3;\n        t.framesSinceLastMatch = 0;\n        t.box.x = a*d.box.x + (1-a)*t.box.x;\n        t.box.y = a*d.box.y + (1-a)*t.box.y;\n        t.box.w = a*d.box.w + (1-a)*t.box.w;\n        t.box.h = a*d.box.h + (1-a)*t.box.h;\n        t.foot.x = a*d.foot.x + (1-a)*t.foot.x;\n        t.foot.y = a*d.foot.y + (1-a)*t.foot.y;\n        t.hits += 1;\n        t.age = 0;\n        const wasConfirmed = t.confirmed;\n        if (t.hits >= T.trackConfirmHits) t.confirmed = true;\n        t.justConfirmed = !wasConfirmed && t.confirmed;\n        const inside = this.inPoly({ x: t.foot.x, y: t.foot.y }, poly);\n        t.insideHistory.push(inside);\n        if (t.insideHistory.length > 32) t.insideHistory.shift();\n        t.posHistory.push({ x: t.foot.x, y: t.foot.y, frame: local.frame });\n        if (t.posHistory.length > 16) t.posHistory.shift();\n      }\n      // 5. Spawn new tracks. State inheritance: if a track recently died nearby,\n      // adopt its state + last-event metadata so an ID-swap doesn't re-fire ENTRY/EXIT.\n      const GRAVEYARD_PX = 100;\n      const GRAVEYARD_FRAMES = 30;\n      local.graveyard = (local.graveyard || []).filter(g => local.frame - g.diedFrame < GRAVEYARD_FRAMES);\n      for (let di = 0; di < dets.length; di++) {\n        if (usedD.has(di)) continue;\n        const d = dets[di];\n        const inside = this.inPoly({ x: d.foot.x, y: d.foot.y }, poly);\n        // Search graveyard for nearest dead track.\n        let inh = null, inhDist = GRAVEYARD_PX;\n        for (const g of local.graveyard) {\n          const gd = Math.hypot(g.foot.x - d.foot.x, g.foot.y - d.foot.y);\n          if (gd < inhDist) { inhDist = gd; inh = g; }\n        }\n        // Crossing inference: did this detection appear on the OPPOSITE side\n        // of the count line from any recent presence (within parallel distance)?\n        // If yes, this is likely a person who crossed during a detection gap.\n        let pendingEvent = null;\n        if (!inh) {\n          let foundOpposite = false, foundSame = false;\n          for (const e of (local.presenceTrail || [])) {\n            if (local.frame - e.frame < 1) continue;  // skip current frame's own entries\n            const tdx = e.x - d.foot.x;\n            const tdy = e.y - d.foot.y;\n            const parDist = Math.abs(tdx * lineDir.x + tdy * lineDir.y);\n            if (parDist > T.inferenceParallelMaxPx) continue;\n            if (e.inside === inside) foundSame = true;\n            else foundOpposite = true;\n          }\n          if (foundOpposite && !foundSame) {\n            pendingEvent = this.eventForArea(inside);\n          }\n        }\n        local.tracks.push({\n          id: local.nextId++,\n          box: { x: d.box.x, y: d.box.y, w: d.box.w, h: d.box.h },\n          foot: { x: d.foot.x, y: d.foot.y },\n          hits: 1, age: 0, confirmed: false,\n          insideHistory: [inside],\n          firstInside: inside,\n          posHistory: [{ x: d.foot.x, y: d.foot.y, frame: local.frame }],\n          lastCountFrame: inh ? inh.lastCountFrame : -999,\n          lastEventType: inh ? inh.lastEventType : null,\n          state: inh ? inh.state : null,\n          lastStateChangeFrame: inh ? inh.lastStateChangeFrame : null,\n          framesSinceLastMatch: 0,\n          recoveredFromOcclusion: false,\n          justConfirmed: false,\n          pendingInferenceEvent: pendingEvent\n        });\n      }\n      // 6. Age unmatched tracks. Move expired ones to graveyard before removing.\n      for (let ti = 0; ti < local.tracks.length; ti++) {\n        if (!usedT.has(ti)) {\n          local.tracks[ti].age += 1;\n          local.tracks[ti].framesSinceLastMatch = (local.tracks[ti].framesSinceLastMatch || 0) + 1;\n        }\n      }\n      const dying = [];\n      const surviving = [];\n      for (const t of local.tracks) {\n        if (t.age > T.trackMaxAge) dying.push(t);\n        else surviving.push(t);\n      }\n      for (const t of dying) {\n        if (t.confirmed) {\n          local.graveyard.push({\n            foot: { x: t.foot.x, y: t.foot.y },\n            state: t.state,\n            lastStateChangeFrame: t.lastStateChangeFrame,\n            lastEventType: t.lastEventType,\n            lastCountFrame: t.lastCountFrame,\n            diedFrame: local.frame\n          });\n        }\n      }\n      local.tracks = surviving;\n\n      // 7. Counting with hysteresis + perpendicular-velocity gate + region cooldown.\n      // State machine: immediate-transition with occlusion-aware validation.\n      // Single-frame state mismatch fires event. Anti-flap (minStateDwellFrames)\n      // blocks repeats. Perp-velocity gate is skipped when track just recovered\n      // from occlusion (3+ unmatched frames) - the gap ate the motion samples.\n      const validateMotion = (t) => {\n        if (t.recoveredFromOcclusion) return true;\n        const k = T.perpVelocityWindowFrames;\n        if (t.posHistory.length < k) return true;\n        const p0 = t.posHistory[t.posHistory.length - k];\n        const p1 = t.posHistory[t.posHistory.length - 1];\n        const perpComp = (p1.x - p0.x) * nrm.x + (p1.y - p0.y) * nrm.y;\n        return Math.abs(perpComp) >= T.perpVelocityMinPx;\n      };\n      for (const t of local.tracks) {\n        if (!t.confirmed) continue;\n        const H = t.insideHistory;\n        if (!H.length) continue;\n        const currentInside = H[H.length - 1];\n        const currentStateName = currentInside ? 'inside' : 'outside';\n\n        // First time confirmed: adopt state and fire any \"missed\" transition.\n        // Prefer the spawn-time inference event (looks at trail across the line).\n        // Fall back to firstInside-vs-current check (tracks that flipped during\n        // unconfirmed phase but had no opposite-side trail).\n        if (t.state == null) {\n          t.state = currentStateName;\n          t.lastStateChangeFrame = local.frame;\n          let inferredEvent = t.pendingInferenceEvent;\n          if (!inferredEvent) {\n            const initialStateName = t.firstInside ? 'inside' : 'outside';\n            if (initialStateName !== currentStateName) {\n              inferredEvent = this.eventForArea(currentInside);\n            }\n          }\n          if (inferredEvent && validateMotion(t)) {\n            t._pendingEvent = inferredEvent;\n          }\n          t.pendingInferenceEvent = null;\n        } else if (t.state !== currentStateName) {\n          // Confirmed track state mismatch -> potential transition.\n          if (local.frame - (t.lastStateChangeFrame || -999) < T.minStateDwellFrames) continue;\n          if (!validateMotion(t)) continue;\n          t.state = currentStateName;\n          t.lastStateChangeFrame = local.frame;\n          t._pendingEvent = this.eventForArea(currentInside);\n        }\n        if (!t._pendingEvent) continue;\n        const event = t._pendingEvent;\n        t._pendingEvent = null;\n\n        if (event === 'ENTRY') {\n          local.entries += 1;\n          local.occupancy += 1;\n          local.lastEvent = 'ENTRY #' + t.id;\n        } else {\n          local.exits += 1;\n          local.occupancy = Math.max(0, local.occupancy - 1);\n          local.lastEvent = 'EXIT #' + t.id;\n        }\n        t.lastCountFrame = local.frame;\n        t.lastEventType = event;\n        local.recentEvents.push({ event, x: t.foot.x, y: t.foot.y, frame: local.frame });\n        if (local.recentEvents.length > 32) local.recentEvents.shift();\n      }\n      local.inRoi = local.tracks.filter(t => t.confirmed && this.inPoly({ x: t.foot.x, y: t.foot.y }, poly)).length;\n    },\n    toggleWS() { this.wsConnected ? this.closeWS() : this.initWS(); },\n    initWS() {\n      if (this.ws) return;\n      this.ws = new WebSocket(this.socketURL);\n      this.ws.binaryType = 'arraybuffer';\n      this.ws.onopen = () => { this.wsConnected = true; };\n      this.ws.onmessage = (event) => {\n        try {\n          const uint8 = new Uint8Array(event.data);\n          const str = new TextDecoder().decode(uint8);\n          const obj = JSON.parse(str);\n          const data = obj.data || obj;\n          if (data.resolution) { this.streamW = data.resolution[0]; this.streamH = data.resolution[1]; }\n          if (data.image) {\n            this.lastImage = data.image;\n            this.imgObj.src = `data:image/jpeg;base64,${data.image}`;\n          }\n          if (Array.isArray(data.boxes)) {\n            const labels = Array.isArray(data.labels) ? data.labels : ['person'];\n            this.detections = [];\n            for (const b of data.boxes) {\n              if (!Array.isArray(b) || b.length < 6) continue;\n              const bx = Number(b[0]), by = Number(b[1]), bw = Number(b[2]), bh = Number(b[3]);\n              let score = Number(b[4]);\n              let classId = Number(b[5]);\n              if (!Number.isInteger(classId) && Number.isInteger(Number(b[4]))) {\n                classId = Number(b[4]);\n                score = Number(b[5]);\n              }\n              let cls = String(labels[classId] || '').toLowerCase();\n              if (cls !== 'person' && classId === 0) cls = 'person';\n              if (cls !== 'person') continue;\n              if (![bx, by, bw, bh].every(Number.isFinite)) continue;\n              this.detections.push({\n                x: bx,\n                y: by + (bh / 2),\n                boxX: bx,\n                boxY: by,\n                w: bw,\n                h: bh,\n                score\n              });\n            }\n            this.updateLocalCount();\n            this.draw();\n          }\n        } catch (e) {}\n      };\n      this.ws.onclose = () => { this.wsConnected = false; this.ws = null; };\n      this.ws.onerror = () => { this.ws?.close(); };\n    },\n    closeWS() {\n      if (this.ws) { this.ws.close(); this.ws = null; }\n      this.wsConnected = false;\n    },\n    drawBg() {\n      if (!this.bgCtx) return;\n      this.bgCtx.fillStyle = '#1a1a1a';\n      this.bgCtx.fillRect(0, 0, this.W, this.H);\n      if (this.imgObj.complete && this.imgObj.naturalWidth) {\n        const drawW = this.streamW * this.bgScale;\n        const drawH = this.streamH * this.bgScale;\n        this.bgCtx.drawImage(this.imgObj, this.bgOffsetX, this.bgOffsetY, drawW, drawH);\n      }\n      this.draw();\n    },\n    draw() {\n      if (!this.ctx) return;\n      const c = this.ctx;\n      c.clearRect(0, 0, this.W, this.H);\n\n      // Detections\n      for (const d of this.detections) {\n        const [boxCx, boxCy] = this.modelToDisplay(d.boxX ?? d.x, d.boxY ?? d.y);\n        const [pointX, pointY] = this.modelToDisplay(d.x, d.y);\n        const dw = d.w * this.bgScale;\n        const dh = d.h * this.bgScale;\n        const insidePoly = this.polygon.length >= 3 && this.inPoly({ x: d.x, y: d.y }, this.polygon);\n        c.strokeStyle = insidePoly ? '#ef5350' : '#4caf50';\n        c.lineWidth = 2;\n        c.strokeRect(boxCx - dw/2, boxCy - dh/2, dw, dh);\n        c.fillStyle = '#ffeb3b';\n        c.strokeStyle = '#111';\n        c.lineWidth = 2;\n        c.beginPath();\n        c.arc(pointX, pointY, 6, 0, Math.PI * 2);\n        c.fill();\n        c.stroke();\n        c.strokeStyle = '#ffeb3b';\n        c.lineWidth = 2;\n        c.beginPath();\n        c.moveTo(pointX - 12, pointY); c.lineTo(pointX + 12, pointY);\n        c.moveTo(pointX, pointY - 12); c.lineTo(pointX, pointY + 12);\n        c.stroke();\n        c.fillStyle = '#ffeb3b';\n        c.font = 'bold 11px sans-serif';\n        c.fillText('BOTTOM POINT', pointX + 9, pointY - 9);\n      }\n\n      // Saved ROI polygon\n      if (this.polygon.length >= 3) {\n        const pts = this.polygon.map(p => this.modelToDisplay(p[0], p[1]));\n        c.fillStyle = 'rgba(33, 150, 243, 0.15)';\n        c.strokeStyle = '#2196F3';\n        c.lineWidth = 2;\n        c.beginPath();\n        c.moveTo(pts[0][0], pts[0][1]);\n        for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]);\n        c.closePath();\n        c.fill();\n        c.stroke();\n\n        const N = pts.length;\n        for (let i = 0; i < N; i++) {\n          const [ax, ay] = pts[i], [bx, by] = pts[(i+1) % N];\n          const mx = (ax + bx) / 2, my = (ay + by) / 2;\n          c.fillStyle = i === this.countEdgeIndex ? '#ff9800' : '#90caf9';\n          c.font = 'bold 11px sans-serif';\n          c.fillText('#' + (i+1), mx - 6, my - 4);\n        }\n\n        if (this.countEdgeIndex >= 0 && this.countEdgeIndex < N) {\n          const a = pts[this.countEdgeIndex], b = pts[(this.countEdgeIndex+1) % N];\n          c.strokeStyle = '#ff9800';\n          c.lineWidth = 5;\n          c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke();\n          c.fillStyle = '#ff9800';\n          c.font = 'bold 12px sans-serif';\n          c.fillText('COUNT LINE', (a[0]+b[0])/2 + 6, (a[1]+b[1])/2 - 6);\n        }\n\n        for (const [px, py] of pts) {\n          c.beginPath(); c.arc(px, py, 4, 0, Math.PI * 2);\n          c.fillStyle = '#2196F3'; c.fill();\n        }\n      }\n\n      // ROI polygon being drawn\n      if (this.polyDrawing.length) {\n        c.strokeStyle = '#2196F3';\n        c.lineWidth = 2;\n        c.setLineDash([4, 4]);\n        c.beginPath();\n        c.moveTo(this.polyDrawing[0].x, this.polyDrawing[0].y);\n        for (let i = 1; i < this.polyDrawing.length; i++) c.lineTo(this.polyDrawing[i].x, this.polyDrawing[i].y);\n        if (this.mouse.x >= 0 && this.mode === 'poly') c.lineTo(this.mouse.x, this.mouse.y);\n        c.stroke();\n        c.setLineDash([]);\n        for (let i = 0; i < this.polyDrawing.length; i++) {\n          const p = this.polyDrawing[i];\n          c.beginPath(); c.arc(p.x, p.y, i === 0 ? 7 : 4, 0, Math.PI * 2);\n          c.fillStyle = i === 0 ? '#00e676' : '#2196F3'; c.fill();\n        }\n      }\n\n      // Interior presence polygon in model coordinates; drawing in display coordinates.\n      if (this.presencePolygon.length >= 3) {\n        const pts = this.presencePolygon.map(p => this.modelToDisplay(p[0], p[1]));\n        c.strokeStyle = '#00e5ff'; c.fillStyle = 'rgba(0,229,255,0.10)'; c.lineWidth = 2;\n        c.beginPath(); c.moveTo(pts[0][0], pts[0][1]);\n        for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]);\n        c.closePath(); c.fill(); c.stroke();\n        c.fillStyle = '#00e5ff'; c.fillText('CELL INTERIOR', pts[0][0] + 6, pts[0][1] - 6);\n      }\n      if (this.presenceDrawing.length) {\n        c.strokeStyle = '#00e5ff'; c.lineWidth = 2; c.setLineDash([4,4]);\n        c.beginPath(); c.moveTo(this.presenceDrawing[0].x, this.presenceDrawing[0].y);\n        for (let i = 1; i < this.presenceDrawing.length; i++) c.lineTo(this.presenceDrawing[i].x, this.presenceDrawing[i].y);\n        if (this.mode === 'presence' && this.mouse.x >= 0) c.lineTo(this.mouse.x, this.mouse.y);\n        c.stroke(); c.setLineDash([]);\n      }\n\n      // Saved masks\n      for (const m of this.masks) {\n        if (!m || m.length < 3) continue;\n        c.fillStyle = 'rgba(244, 67, 54, 0.25)';\n        c.strokeStyle = '#f44336';\n        c.lineWidth = 2;\n        c.beginPath();\n        const pts = m.map(p => this.modelToDisplay(p[0], p[1]));\n        c.moveTo(pts[0][0], pts[0][1]);\n        for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]);\n        c.closePath();\n        c.fill();\n        c.stroke();\n      }\n\n      // Mask drawing in progress\n      if (this.maskDrawing.length) {\n        c.strokeStyle = '#f44336';\n        c.lineWidth = 2;\n        c.setLineDash([4, 4]);\n        c.beginPath();\n        c.moveTo(this.maskDrawing[0].x, this.maskDrawing[0].y);\n        for (let i = 1; i < this.maskDrawing.length; i++) c.lineTo(this.maskDrawing[i].x, this.maskDrawing[i].y);\n        if (this.mouse.x >= 0 && this.mode === 'mask') c.lineTo(this.mouse.x, this.mouse.y);\n        c.stroke();\n        c.setLineDash([]);\n        for (let i = 0; i < this.maskDrawing.length; i++) {\n          const p = this.maskDrawing[i];\n          c.beginPath(); c.arc(p.x, p.y, i === 0 ? 7 : 4, 0, Math.PI * 2);\n          c.fillStyle = i === 0 ? '#00e676' : '#f44336'; c.fill();\n        }\n      }\n    },\n    eventXY(e) {\n      const r = this.$refs.canvas.getBoundingClientRect();\n      return {\n        x: Math.round((e.clientX - r.left) * (this.W / r.width)),\n        y: Math.round((e.clientY - r.top) * (this.H / r.height))\n      };\n    },\n    onMove(e) {\n      this.mouse = this.eventXY(e);\n      if (['poly', 'mask', 'presence'].includes(this.mode)) this.draw();\n    },\n    onClick(e) {\n      const p = this.eventXY(e);\n      if (this.mode === 'poly') {\n        this.polyDrawing.push(p);\n        this.draw();\n      } else if (this.mode === 'presence') {\n        this.presenceDrawing.push(p);\n        this.draw();\n      } else if (this.mode === 'mask') {\n        this.maskDrawing.push(p);\n        this.draw();\n      } else if (this.mode === 'line') {\n        if (this.polygon.length < 3) return;\n        const [mx, my] = this.displayToModel(p.x, p.y);\n        let bestI = -1, bestDist = Infinity;\n        const N = this.polygon.length;\n        for (let i = 0; i < N; i++) {\n          const a = this.polygon[i], b = this.polygon[(i+1) % N];\n          const d = this.pointToSegmentDist({ x: mx, y: my }, { x: a[0], y: a[1] }, { x: b[0], y: b[1] });\n          if (d < bestDist) { bestDist = d; bestI = i; }\n        }\n        if (bestI >= 0 && bestDist < 30) {\n          this.countEdgeIndex = bestI;\n          this.resetLocalCount();\n          this.draw();\n        }\n      }\n    },\n    onRightClick(e) {\n      if (this.mode === 'poly' && this.polyDrawing.length) {\n        this.polyDrawing.pop();\n        this.draw();\n      } else if (this.mode === 'presence' && this.presenceDrawing.length) {\n        this.presenceDrawing.pop();\n        this.draw();\n      } else if (this.mode === 'mask' && this.maskDrawing.length) {\n        this.maskDrawing.pop();\n        this.draw();\n      }\n    },\n    savePolygon() {\n      if (this.polyDrawing.length < 3) return;\n      this.polygon = this.polyDrawing.map(p => this.displayToModel(p.x, p.y));\n      this.polyDrawing = [];\n      this.countEdgeIndex = -1;\n      this.resetLocalCount();\n      this.draw();\n    },\n    cancelPolyDrawing() {\n      this.polyDrawing = [];\n      this.draw();\n    },\n    clearPolygon() {\n      this.polygon = [];\n      this.countEdgeIndex = -1;\n      this.resetLocalCount();\n      this.draw();\n    },\n    saveMask() {\n      if (this.maskDrawing.length < 3) return;\n      const modelPts = this.maskDrawing.map(p => this.displayToModel(p.x, p.y));\n      this.masks.push(modelPts);\n      this.maskDrawing = [];\n      this.draw();\n    },\n    cancelMaskDrawing() {\n      this.maskDrawing = [];\n      this.draw();\n    },\n    deleteMask(i) {\n      this.masks.splice(i, 1);\n      this.draw();\n    },\n    savePresenceZone() {\n      if (this.presenceDrawing.length < 3) return;\n      this.presencePolygon = this.presenceDrawing.map(p => this.displayToModel(p.x, p.y));\n      this.presenceDrawing = [];\n      this.draw();\n    },\n    clearPresenceZone() {\n      this.presencePolygon = [];\n      this.presenceDrawing = [];\n      this.draw();\n    },\n    saveAll() {\n      if (this.polygon.length < 3 || this.countEdgeIndex < 0) return;\n      this.send({\n        topic: 'save_roi',\n        payload: {\n          polygon: this.polygon,\n          count_edge_index: this.countEdgeIndex,\n          entry_area: this.entryArea,\n          masks: this.masks,\n          presence_polygon: this.presencePolygon\n        }\n      });\n      this.savedMsg = 'Saved.';\n      setTimeout(() => { this.savedMsg = '' }, 2000);\n    }\n  }\n}\n</script>\n\n<style scoped>\n.roi-panel { display: flex; gap: 16px; padding: 16px; height: calc(100vh - 64px); box-sizing: border-box; }\n.left { flex: 0 0 auto; display: flex; flex-direction: column; gap: 10px; }\n.canvas-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #1e1e1e; border-radius: 8px 8px 0 0; }\n.canvas-title { font-size: 11px; color: #888; font-weight: 600; flex: 1; letter-spacing: 0.5px; }\n.canvas-container { position: relative; background: #000; width: 640px; height: 480px; border-radius: 0 0 8px 8px; overflow: hidden; }\n.bg, .overlay { position: absolute; top: 0; left: 0; width: 640px; height: 480px; }\n.overlay { cursor: crosshair; }\n.coords { position: absolute; bottom: 8px; right: 8px; background: rgba(0,0,0,0.8); color: #aaa; padding: 4px 10px; border-radius: 4px; font-size: 11px; font-family: monospace; }\n.toolbar { display: flex; gap: 10px; align-items: center; padding: 8px 0; flex-wrap: wrap; }\n.right { flex: 1; min-width: 320px; max-width: 420px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }\n.section { background: #1e1e1e; border-radius: 8px; padding: 16px; }\n.title { font-size: 11px; color: #888; font-weight: 600; letter-spacing: 0.5px; margin-bottom: 12px; }\n.hint { font-size: 11px; color: #666; line-height: 1.5; margin-bottom: 10px; }\n.empty { font-size: 12px; color: #555; padding: 8px 0; }\n.info-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 12px; gap: 8px; }\n.count-section { border: 1px solid #34513a; }\n.capture-section { border: 1px solid #35566c; }\n.count-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 10px; }\n.count-grid div { background: #252525; border-radius: 6px; padding: 10px; }\n.count-grid span { display: block; color: #888; font-size: 10px; margin-bottom: 5px; }\n.count-grid strong { color: #fff; font-size: 24px; line-height: 1; }\n.mono { font-family: monospace; color: #ddd; }\n.btn-row { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }\n.mask-list { max-height: 160px; overflow-y: auto; }\n.mask-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; background: #252525; border-radius: 6px; margin-bottom: 6px; font-size: 12px; }\n.save-section { background: #2a2a2a; }\n.saved-msg { margin-top: 8px; color: #4caf50; font-size: 12px; text-align: center; }\n</style>",
+        "storeOutMessages": true,
+        "passthru": true,
+        "resendOnRefresh": true,
+        "templateScope": "local",
+        "className": "",
+        "x": 470,
+        "y": 380,
+        "wires": [
+            [
+                "roi_backend"
+            ]
+        ]
+    },
+    {
+        "id": "roi_backend",
+        "type": "function",
+        "z": "flow_maint",
+        "name": "ROI Backend",
+        "func": "if (msg.topic === 'get_roi') {\n    const cfg = global.get('roi_config') || { polygon: [], count_edge_index: -1, entry_area: 'inside', masks: [] };\n    return [{ topic: 'roi_loaded', payload: cfg }, null, null, null];\n}\nif (msg.topic === 'save_roi') {\n    const cfg = msg.payload;\n    if (!cfg || !Array.isArray(cfg.polygon) || cfg.polygon.length < 3) return null;\n    const N = cfg.polygon.length;\n    if (typeof cfg.count_edge_index !== 'number' || cfg.count_edge_index < 0 || cfg.count_edge_index >= N) return null;\n    cfg.entry_area = cfg.entry_area === 'outside' ? 'outside' : 'inside';\n    if (!Array.isArray(cfg.masks)) cfg.masks = [];\n    if (!Array.isArray(cfg.presence_polygon)) cfg.presence_polygon = [];\n    if (cfg.presence_polygon.length > 0 && cfg.presence_polygon.length < 3) return null;\n    global.set('roi_config', cfg);\n    node.status({ fill: 'green', shape: 'dot', text: 'ROI saved (edge ' + cfg.count_edge_index + ')' });\n    return [null, { filename: '/userdata/config/roi_config.json', payload: JSON.stringify(cfg, null, 2) }, null, null];\n}\nif (msg.topic === 'save_training_image') {\n    try {\n        const p = msg.payload || {};\n        const raw = String(p.image || '').replace(new RegExp('^data:image/[^;]+;base64,'), '');\n        if (!raw) return [{ topic: 'capture_error', payload: { error: 'no image frame available' } }, null, null, null];\n        const jpg = Buffer.from(raw, 'base64');\n        if (jpg.length < 4 || jpg[0] !== 0xff || jpg[1] !== 0xd8) return [{ topic: 'capture_error', payload: { error: 'frame is not valid JPEG data' } }, null, null, null];\n        let label = String(p.label || 'person').trim().replace(/[^a-zA-Z0-9_-]/g, '_');\n        if (!label) label = 'person';\n        label = label.slice(0, 40);\n        const ts = new Date().toISOString().replace(/[:.]/g, '-');\n        const base = '/userdata/training_images/' + label + '/internal_capture_' + label + '_' + ts;\n        const meta = { label, captured_at: new Date().toISOString(), polygon: Array.isArray(p.polygon) ? p.polygon : null, count_edge_index: typeof p.count_edge_index === 'number' ? p.count_edge_index : null, entry_area: p.entry_area === 'outside' ? 'outside' : 'inside', format: 'jpeg', bytes: jpg.length };\n        node.status({ fill: 'green', shape: 'dot', text: 'captured ' + label });\n        return [\n            { topic: 'capture_queued', payload: { filename: base + '.jpg', bytes: jpg.length } },\n            { filename: base + '.json', payload: JSON.stringify(meta, null, 2) },\n            { filename: base + '.jpg', payload: jpg, capture_filename: base + '.jpg', capture_bytes: jpg.length },\n            null\n        ];\n    } catch (e) {\n        node.warn('Training image capture failed: ' + e.message);\n        return [{ topic: 'capture_error', payload: { error: e.message } }, null, null, null];\n    }\n}\nif (msg.topic === 'archive_training_folder') {\n    const p = msg.payload || {};\n    let label = String(p.label || 'person').trim().replace(/[^a-zA-Z0-9_-]/g, '_');\n    if (!label) label = 'person';\n    label = label.slice(0, 40);\n    const ts = new Date().toISOString().replace(/[:.]/g, '-');\n    const archiveName = 'internal_training_' + label + '_' + ts + '.tar.gz';\n    const archiveFile = '/userdata/training_archives/' + archiveName;\n    const imageDir = '/userdata/training_images/' + label;\n    const cmd = '-c \"mkdir -p /userdata/training_archives && test -d ' + imageDir + ' && tar -C /userdata/training_images -czf ' + archiveFile + ' ' + label + '\"';\n    node.status({ fill: 'blue', shape: 'ring', text: 'archiving ' + label });\n    return [\n        { topic: 'archive_queued', payload: { filename: archiveFile } },\n        null,\n        null,\n        { payload: cmd, archive_filename: archiveFile, archive_name: archiveName, archive_label: label }\n    ];\n}\nreturn null;",
+        "outputs": 4,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 670,
+        "y": 380,
+        "wires": [
+            [
+                "roi_editor"
+            ],
+            [
+                "file_write"
+            ],
+            [
+                "file_write_binary"
+            ],
+            [
+                "archive_exec"
+            ]
+        ]
+    },
+    {
+        "id": "file_write",
+        "type": "file",
+        "z": "flow_maint",
+        "name": "Save File",
+        "filename": "filename",
+        "filenameType": "msg",
+        "appendNewline": false,
+        "createDir": true,
+        "overwriteFile": "true",
+        "encoding": "utf8",
+        "x": 870,
+        "y": 430,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "file_write_binary",
+        "type": "file",
+        "z": "flow_maint",
+        "name": "Save Binary File",
+        "filename": "filename",
+        "filenameType": "msg",
+        "appendNewline": false,
+        "createDir": true,
+        "overwriteFile": "true",
+        "encoding": "none",
+        "x": 890,
+        "y": 500,
+        "wires": [
+            [
+                "capture_confirm"
+            ]
+        ]
+    },
+    {
+        "id": "capture_confirm",
+        "type": "function",
+        "z": "flow_maint",
+        "name": "Capture Confirm",
+        "func": "const filename = msg.capture_filename || msg.filename || '';\nconst bytes = msg.capture_bytes || (Buffer.isBuffer(msg.payload) ? msg.payload.length : undefined);\nnode.status({ fill: 'green', shape: 'dot', text: 'saved image' });\nreturn { topic: 'capture_saved', payload: { filename, bytes } };",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1090,
+        "y": 500,
+        "wires": [
+            [
+                "roi_editor"
+            ]
+        ]
+    },
+    {
+        "id": "archive_exec",
+        "type": "exec",
+        "z": "flow_maint",
+        "name": "Create Training Archive",
+        "command": "sh",
+        "addpay": "payload",
+        "append": "",
+        "useSpawn": "false",
+        "timer": "60",
+        "winHide": false,
+        "oldrc": false,
+        "x": 890,
+        "y": 560,
+        "wires": [
+            [
+                "archive_result"
+            ],
+            [
+                "archive_result"
+            ],
+            [
+                "archive_result"
+            ]
+        ]
+    },
+    {
+        "id": "archive_result",
+        "type": "function",
+        "z": "flow_maint",
+        "name": "Archive Result",
+        "func": "if (typeof msg.payload === 'string') {\n    const text = msg.payload.trim();\n    if (text) node.status({ fill: 'grey', shape: 'ring', text: text.slice(0, 40) });\n    return null;\n}\nconst code = typeof msg.payload === 'number' ? msg.payload : (msg.payload && typeof msg.payload.code === 'number' ? msg.payload.code : undefined);\nif (code === 0) {\n    const filename = msg.archive_filename || '';\n    const archiveName = msg.archive_name || (filename.split('/').pop());\n    node.status({ fill: 'green', shape: 'dot', text: 'archive ready' });\n    return { topic: 'archive_ready', payload: { filename, url: '/training_archive/' + archiveName } };\n}\nif (code !== undefined) {\n    node.status({ fill: 'red', shape: 'ring', text: 'archive failed' });\n    return { topic: 'archive_error', payload: { error: 'tar failed with code ' + code } };\n}\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1110,
+        "y": 560,
+        "wires": [
+            [
+                "roi_editor"
+            ]
+        ]
+    },
+    {
+        "id": "archive_download_in",
+        "type": "http in",
+        "z": "flow_maint",
+        "name": "Download Training Archive",
+        "url": "/training_archive/:name",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 180,
+        "y": 640,
+        "wires": [
+            [
+                "archive_download_prepare"
+            ]
+        ]
+    },
+    {
+        "id": "archive_download_prepare",
+        "type": "function",
+        "z": "flow_maint",
+        "name": "Prepare Archive Download",
+        "func": "const name = String((msg.req && msg.req.params && msg.req.params.name) || '').replace(/[^a-zA-Z0-9_.-]/g, '');\nif (!name || !name.endsWith('.tar.gz')) {\n    msg.statusCode = 400;\n    msg.payload = 'Bad archive name';\n    return [null, msg];\n}\nmsg.filename = '/userdata/training_archives/' + name;\nmsg.headers = {\n    'Content-Type': 'application/gzip',\n    'Content-Disposition': 'attachment; filename=\"' + name + '\"'\n};\nreturn [msg, null];",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 420,
+        "y": 640,
+        "wires": [
+            [
+                "archive_file_read"
+            ],
+            [
+                "archive_http_response"
+            ]
+        ]
+    },
+    {
+        "id": "archive_file_read",
+        "type": "file in",
+        "z": "flow_maint",
+        "name": "Read Archive File",
+        "filename": "filename",
+        "filenameType": "msg",
+        "format": "",
+        "chunk": false,
+        "sendError": false,
+        "encoding": "none",
+        "allProps": false,
+        "x": 660,
+        "y": 620,
+        "wires": [
+            [
+                "archive_http_response"
+            ]
+        ]
+    },
+    {
+        "id": "archive_http_response",
+        "type": "http response",
+        "z": "flow_maint",
+        "name": "Archive Download Response",
+        "statusCode": "",
+        "headers": {},
+        "x": 900,
+        "y": 640,
+        "wires": []
+    }
+]

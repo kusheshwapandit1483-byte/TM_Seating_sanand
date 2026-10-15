@@ -1,0 +1,3 @@
+# Preserve the supplied reference bytes and normal unified-patch context whitespace.
+special_presence_programme/cell_6/reference_original.txt -text -whitespace
+special_presence_programme/cell_6/changes.patch -whitespace

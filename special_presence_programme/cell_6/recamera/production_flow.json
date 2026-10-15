@@ -1,0 +1,395 @@
+[
+    {
+        "id": "flow_prod",
+        "type": "tab",
+        "label": "Production - Interior Presence",
+        "disabled": false,
+        "info": "Composite cabin counter: per-camera ROI line-crossing with edge attribution. Publishes ENTRY/EXIT events. Independent >2 second interior presence confirmation; ESP32 selects inside camera.",
+        "env": []
+    },
+    {
+        "id": "sscma_client",
+        "type": "sscma",
+        "host": "localhost",
+        "mqttport": "1883",
+        "apiport": "80",
+        "clientid": "recamera",
+        "username": "",
+        "password": ""
+    },
+    {
+        "id": "mqtt_broker_cfg",
+        "type": "mqtt-broker",
+        "name": "Hub Broker",
+        "broker": "192.168.10.1",
+        "port": "1883",
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "closeTopic": "",
+        "willTopic": "eagle/unknown/status",
+        "willQos": "1",
+        "willRetain": "true",
+        "willPayload": "{\"online\":false}",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "prod_inject",
+        "type": "inject",
+        "z": "flow_prod",
+        "name": "Startup",
+        "props": [
+            {
+                "p": "topic",
+                "vt": "str",
+                "v": "startup"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "2",
+        "topic": "startup",
+        "x": 110,
+        "y": 80,
+        "wires": [
+            [
+                "prod_init"
+            ]
+        ]
+    },
+    {
+        "id": "prod_init",
+        "type": "function",
+        "z": "flow_prod",
+        "name": "Init",
+        "func": "global.set('system_ready', false);\nglobal.set('roi_config', null);\nflow.set('device_id', 'unknown');\nflow.set('door_label', '?');\nflow.set('start_time', Date.now());\nflow.set('config_error', false);\nflow.set('roi_error', false);\nflow.set('last_gate_status', 'booting');\nflow.set('last_track_status', {\n    frame: 0,\n    detections: 0,\n    tracks: 0,\n    confirmed: 0,\n    in_roi: 0,\n    events: 0,\n    note: 'booting',\n    ts: Date.now()\n});\nflow.set('event_entry_count', 0);\nflow.set('event_exit_count', 0);\nflow.set('last_event', '-');\nnode.status({ fill: 'blue', shape: 'ring', text: 'Init...' });\nreturn [\n    { filename: '/userdata/config/device_config.json' },\n    { filename: '/userdata/config/roi_config.json' }\n];",
+        "outputs": 2,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 250,
+        "y": 80,
+        "wires": [
+            [
+                "prod_load_cfg"
+            ],
+            [
+                "prod_load_roi"
+            ]
+        ]
+    },
+    {
+        "id": "prod_load_cfg",
+        "type": "file in",
+        "z": "flow_prod",
+        "name": "Load Config",
+        "filename": "filename",
+        "filenameType": "msg",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": true,
+        "encoding": "utf8",
+        "allProps": false,
+        "x": 420,
+        "y": 40,
+        "wires": [
+            [
+                "prod_apply_cfg"
+            ]
+        ]
+    },
+    {
+        "id": "prod_apply_cfg",
+        "type": "function",
+        "z": "flow_prod",
+        "name": "Apply Config",
+        "func": "try {\n    const cfg = typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;\n    if (cfg && cfg.device_id && cfg.device_id !== '') {\n        flow.set('device_id', cfg.device_id);\n        flow.set('door_label', cfg.door_label || '?');\n        flow.set('config_error', false);\n        node.status({ fill: 'green', shape: 'dot', text: cfg.device_id + ' Door ' + (cfg.door_label || '?') });\n    } else {\n        node.warn('Config loaded but device_id is empty/missing');\n        node.status({ fill: 'yellow', shape: 'ring', text: 'no device_id' });\n    }\n} catch(e) {\n    node.warn('Config parse error: ' + e.message);\n    node.status({ fill: 'red', shape: 'ring', text: 'parse error' });\n}\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 590,
+        "y": 40,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "prod_load_roi",
+        "type": "file in",
+        "z": "flow_prod",
+        "name": "Load ROI",
+        "filename": "filename",
+        "filenameType": "msg",
+        "format": "utf8",
+        "chunk": false,
+        "sendError": true,
+        "encoding": "utf8",
+        "allProps": false,
+        "x": 420,
+        "y": 120,
+        "wires": [
+            [
+                "prod_apply_roi"
+            ]
+        ]
+    },
+    {
+        "id": "prod_apply_roi",
+        "type": "function",
+        "z": "flow_prod",
+        "name": "Apply ROI",
+        "func": "try {\n    const cfg = typeof msg.payload === 'string' ? JSON.parse(msg.payload) : msg.payload;\n    let final = null;\n    if (cfg && Array.isArray(cfg.polygon) && cfg.polygon.length >= 3\n        && typeof cfg.count_edge_index === 'number'\n        && cfg.count_edge_index >= 0 && cfg.count_edge_index < cfg.polygon.length) {\n        final = {\n            polygon: cfg.polygon,\n            count_edge_index: cfg.count_edge_index,\n            entry_area: cfg.entry_area === 'outside' ? 'outside' : 'inside',\n            masks: Array.isArray(cfg.masks) ? cfg.masks : []\n        };\n    } else if (cfg && Array.isArray(cfg.rect) && cfg.rect.length === 4 && cfg.count_edge) {\n        // Legacy rect config: auto-migrate to a 4-pt polygon\n        const validEdges = ['top', 'bottom', 'left', 'right'];\n        if (validEdges.indexOf(cfg.count_edge) < 0) {\n            node.warn('Invalid count_edge: ' + cfg.count_edge);\n            node.status({ fill: 'red', shape: 'ring', text: 'bad count_edge' });\n            return null;\n        }\n        const x1 = cfg.rect[0], y1 = cfg.rect[1], x2 = cfg.rect[2], y2 = cfg.rect[3];\n        const polygon = [[x1,y1],[x2,y1],[x2,y2],[x1,y2]];\n        const edgeMap = { top: 0, right: 1, bottom: 2, left: 3 };\n        const idx = edgeMap[cfg.count_edge];\n        final = {\n            polygon: polygon,\n            count_edge_index: idx,\n            entry_area: cfg.entry_area === 'outside' ? 'outside' : 'inside',\n            masks: Array.isArray(cfg.masks) ? cfg.masks : []\n        };\n    } else {\n        node.warn('ROI config missing polygon+count_edge_index (or legacy rect+count_edge)');\n        node.status({ fill: 'red', shape: 'ring', text: 'incomplete ROI' });\n        return null;\n    }\n    final.presence_polygon = Array.isArray(cfg.presence_polygon) ? cfg.presence_polygon : [];\n    global.set('roi_config', final);\n    global.set('system_ready', true);\n    node.status({ fill: 'green', shape: 'dot', text: 'ROI ready (edge ' + final.count_edge_index + ', ' + final.polygon.length + 'pt)' });\n} catch(e) {\n    node.warn('ROI parse error: ' + e.message);\n    node.status({ fill: 'red', shape: 'ring', text: 'parse error' });\n}\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 590,
+        "y": 120,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "prod_catch",
+        "type": "catch",
+        "z": "flow_prod",
+        "name": "Catch Config Errors",
+        "scope": [
+            "prod_load_cfg",
+            "prod_load_roi"
+        ],
+        "uncaught": false,
+        "x": 430,
+        "y": 180,
+        "wires": [
+            [
+                "prod_error_handler"
+            ]
+        ]
+    },
+    {
+        "id": "prod_error_handler",
+        "type": "function",
+        "z": "flow_prod",
+        "name": "Error Handler",
+        "func": "const errSource = msg.error ? msg.error.source : {};\nconst errMsg = msg.error ? msg.error.message : 'unknown';\n\nif (errSource && errSource.id === 'prod_load_cfg') {\n    const os = require('os');\n    let fallbackId = os.hostname() || 'cam_' + Date.now().toString(36).slice(-4);\n    fallbackId = fallbackId.replace(/[^a-zA-Z0-9_-]/g, '_');\n    flow.set('device_id', fallbackId);\n    flow.set('config_error', true);\n    node.warn('Config file error: ' + errMsg + ' - using fallback device_id: ' + fallbackId);\n    node.status({ fill: 'yellow', shape: 'ring', text: 'cfg err: ' + fallbackId });\n} else if (errSource && errSource.id === 'prod_load_roi') {\n    flow.set('roi_error', true);\n    node.warn('ROI file error: ' + errMsg + ' - counting disabled until ROI is configured');\n    node.status({ fill: 'red', shape: 'ring', text: 'NO ROI - counting disabled' });\n}\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 630,
+        "y": 180,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "prod_camera",
+        "type": "camera",
+        "z": "flow_prod",
+        "name": "",
+        "client": "sscma_client",
+        "audio": false,
+        "volume": "50",
+        "option": "0",
+        "fps": "10",
+        "mirror": true,
+        "flip": false,
+        "x": 110,
+        "y": 260,
+        "wires": [
+            [
+                "prod_model"
+            ]
+        ]
+    },
+    {
+        "id": "prod_model",
+        "type": "model",
+        "z": "flow_prod",
+        "name": "Person Detect",
+        "uri": "/usr/share/supervisor/models/yolo11n_detection_cv181x_int8.cvimodel",
+        "model": "YOLO11n Detection",
+        "tscore": "0.4",
+        "tiou": "0.4",
+        "debug": false,
+        "trace": false,
+        "counting": false,
+        "draw": false,
+        "classes": "person,bicycle,car,motorcycle,airplane,bus,train,truck,boat,traffic light,fire hydrant,stop sign,parking meter,bench,bird,cat,dog,horse,sheep,cow,elephant,bear,zebra,giraffe,backpack,umbrella,handbag,tie,suitcase,frisbee,skis,snowboard,sports ball,kite,baseball bat,baseball glove,skateboard,surfboard,tennis racket,bottle,wine glass,cup,fork,knife,spoon,bowl,banana,apple,sandwich,orange,broccoli,carrot,hot dog,pizza,donut,cake,chair,couch,potted plant,bed,dining table,toilet,tv,laptop,mouse,remote,keyboard,cell phone,microwave,oven,toaster,sink,refrigerator,book,clock,vase,scissors,teddy bear,hair drier,toothbrush",
+        "splitter": "0,0,0,0",
+        "previewResolution": "640x640",
+        "previewFps": "10",
+        "client": "sscma_client",
+        "x": 280,
+        "y": 260,
+        "wires": [
+            [
+                "prod_gate"
+            ]
+        ]
+    },
+    {
+        "id": "prod_gate",
+        "type": "function",
+        "z": "flow_prod",
+        "name": "Gate",
+        "func": "if (!global.get('system_ready')) {\n    flow.set('last_gate_status', 'No ROI');\n    node.status({ fill: 'grey', shape: 'ring', text: 'No ROI' });\n    return null;\n}\nconst devId = flow.get('device_id');\nif (!devId || devId === 'unknown') {\n    flow.set('last_gate_status', 'No device ID');\n    node.status({ fill: 'yellow', shape: 'ring', text: 'No device ID' });\n    return null;\n}\nflow.set('last_gate_status', 'Active');\nnode.status({ fill: 'green', shape: 'dot', text: 'Active' });\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 440,
+        "y": 260,
+        "wires": [
+            [
+                "prod_track",
+                "prod_presence"
+            ]
+        ]
+    },
+    {
+        "id": "prod_track",
+        "type": "function",
+        "z": "flow_prod",
+        "name": "Track + Count",
+        "func": "if (!msg.payload) {\n    flow.set('last_track_status', { note: 'no_payload', ts: Date.now() });\n    return null;\n}\nconst data = msg.payload.data || msg.payload;\nif (!data) {\n    flow.set('last_track_status', { note: 'no_data', ts: Date.now() });\n    return null;\n}\nconst boxes = data.boxes || [];\nconst labels = data.labels || [];\nconst cfg = global.get('roi_config');\nif (!cfg || !Array.isArray(cfg.polygon) || cfg.polygon.length < 3\n    || typeof cfg.count_edge_index !== 'number'\n    || cfg.count_edge_index < 0 || cfg.count_edge_index >= cfg.polygon.length) {\n    flow.set('last_track_status', { note: 'bad_roi', boxes: Array.isArray(boxes) ? boxes.length : 0, ts: Date.now() });\n    return null;\n}\n\n// SORT-lite tracker (IoU + EMA + dwell-time + perp-velocity + region cooldown).\n// Same tunable knobs and algorithm as maintenance V2 flow.\nconst TUNE = {\n    iouMatchThreshold: 0.10,\n    distMatchPx: 200,\n    posSmoothingAlpha: 0.4,\n    trackConfirmHits: 3,\n    trackMaxAge: 30,\n    stateWindowFrames: 5,\n    minStateDwellFrames: 8,\n    perpVelocityMinPx: 8,\n    perpVelocityWindowFrames: 5,\n    regionCooldownPx: 60,\n    regionCooldownFrames: 30,\n    minDetConfidence: 0.45,\n    inferenceLookbackFrames: 60,\n    inferenceParallelMaxPx: 80\n};\n\nconst poly = cfg.polygon;\nconst N = poly.length;\nconst edgeStart = { x: poly[cfg.count_edge_index][0], y: poly[cfg.count_edge_index][1] };\nconst edgeEnd = { x: poly[(cfg.count_edge_index+1) % N][0], y: poly[(cfg.count_edge_index+1) % N][1] };\nconst eDx = edgeEnd.x - edgeStart.x, eDy = edgeEnd.y - edgeStart.y;\nconst eLen = Math.hypot(eDx, eDy) || 1;\nconst lineDir = { x: eDx / eLen, y: eDy / eLen };\nconst nrm = { x: -eDy / eLen, y: eDx / eLen };\n// Inward normal points INTO polygon. Determined via centroid sign test.\nlet _cx = 0, _cy = 0;\nfor (const _p of poly) { _cx += _p[0]; _cy += _p[1]; }\n_cx /= N; _cy /= N;\nconst _emx = (edgeStart.x + edgeEnd.x) / 2;\nconst _emy = (edgeStart.y + edgeEnd.y) / 2;\nconst _inwardSign = ((_cx - _emx) * nrm.x + (_cy - _emy) * nrm.y) > 0 ? 1 : -1;\nconst inwardNormal = { x: nrm.x * _inwardSign, y: nrm.y * _inwardSign };\nconst masks = cfg.masks || [];\nconst entryArea = cfg.entry_area === 'outside' ? 'outside' : 'inside';\nconst eventForArea = (inside) => {\n    const entryIsInside = entryArea !== 'outside';\n    return inside === entryIsInside ? 'ENTRY' : 'EXIT';\n};\nconst now = Date.now();\nconst frame = (context.get('frame') || 0) + 1;\ncontext.set('frame', frame);\n\n// Presence trail: every detection's foot point + inside flag for crossing inference.\nlet presenceTrail = (context.get('presenceTrail') || []).filter(e => frame - e.frame < TUNE.inferenceLookbackFrames);\n\nfunction inPoly(pt, p) {\n    let inside = false;\n    for (let i = 0, j = p.length - 1; i < p.length; j = i++) {\n        const xi = p[i][0], yi = p[i][1];\n        const xj = p[j][0], yj = p[j][1];\n        if (((yi > pt.y) !== (yj > pt.y)) && (pt.x < (xj - xi) * (pt.y - yi) / (yj - yi) + xi)) inside = !inside;\n    }\n    return inside;\n}\nfunction iou(a, b) {\n    const ax1 = a.x - a.w/2, ay1 = a.y - a.h/2, ax2 = a.x + a.w/2, ay2 = a.y + a.h/2;\n    const bx1 = b.x - b.w/2, by1 = b.y - b.h/2, bx2 = b.x + b.w/2, by2 = b.y + b.h/2;\n    const ix1 = Math.max(ax1, bx1), iy1 = Math.max(ay1, by1);\n    const ix2 = Math.min(ax2, bx2), iy2 = Math.min(ay2, by2);\n    const iw = Math.max(0, ix2 - ix1), ih = Math.max(0, iy2 - iy1);\n    const inter = iw * ih;\n    const aArea = Math.max(1, a.w * a.h), bArea = Math.max(1, b.w * b.h);\n    return inter / (aArea + bArea - inter + 1e-9);\n}\n\n// 1. Extract person detections (filter by class, score, masks).\nconst dets = [];\nif (Array.isArray(boxes)) {\n    for (const b of boxes) {\n        if (!Array.isArray(b) || b.length < 4) continue;\n        const cx = Number(b[0]), cy = Number(b[1]), bw = Number(b[2]), bh = Number(b[3]);\n        if (![cx, cy, bw, bh].every(Number.isFinite)) continue;\n\n        let score = Number(b[4]);\n        let classId = Number(b[5]);\n\n        // Some model payloads are [x,y,w,h,class,score] instead of [x,y,w,h,score,class].\n        if (!Number.isInteger(classId) && Number.isInteger(Number(b[4]))) {\n            classId = Number(b[4]);\n            score = Number(b[5]);\n        }\n        if (!Number.isFinite(score)) score = 1.0;\n        if (score < TUNE.minDetConfidence) continue;\n\n        const labelList = Array.isArray(labels) && labels.length ? labels : ['person'];\n        let cls = String(labelList[classId] || '').toLowerCase();\n        if (!cls && classId === 0) cls = 'person';\n        if (cls !== 'person') continue;\n\n        const fx = cx, fy = cy + bh / 2;\n        let masked = false;\n        for (const m of masks) {\n            if (Array.isArray(m) && m.length >= 3 && inPoly({ x: fx, y: fy }, m)) { masked = true; break; }\n        }\n        if (masked) continue;\n        dets.push({\n            foot: { x: fx, y: fy },\n            box: { x: cx, y: cy, w: bw, h: bh },\n            score\n        });\n    }\n}\n// Append every accepted detection to the presence trail (for crossing inference).\nfor (const _d of dets) {\n    presenceTrail.push({\n        x: _d.foot.x, y: _d.foot.y, frame,\n        inside: inPoly({ x: _d.foot.x, y: _d.foot.y }, poly)\n    });\n}\n\n// 2. IoU-based association (greedy by descending IoU).\nlet tracks = context.get('tracks') || [];\nconst pairs = [];\nfor (let ti = 0; ti < tracks.length; ti++) {\n    for (let di = 0; di < dets.length; di++) {\n        const v = iou(tracks[ti].box, dets[di].box);\n        if (v >= TUNE.iouMatchThreshold) pairs.push({ ti, di, score: v });\n    }\n}\npairs.sort((a, b) => b.score - a.score);\nconst usedT = new Set(), usedD = new Set();\nconst matches = [];\nfor (const p of pairs) {\n    if (usedT.has(p.ti) || usedD.has(p.di)) continue;\n    usedT.add(p.ti); usedD.add(p.di);\n    matches.push([p.ti, p.di]);\n}\n// 3. Distance fallback for unmatched tracks (handles brand-new boxes).\nfor (let ti = 0; ti < tracks.length; ti++) {\n    if (usedT.has(ti)) continue;\n    let bestDi = -1, bestDist = TUNE.distMatchPx;\n    for (let di = 0; di < dets.length; di++) {\n        if (usedD.has(di)) continue;\n        const d = Math.hypot(tracks[ti].foot.x - dets[di].foot.x, tracks[ti].foot.y - dets[di].foot.y);\n        if (d < bestDist) { bestDist = d; bestDi = di; }\n    }\n    if (bestDi >= 0) { usedT.add(ti); usedD.add(bestDi); matches.push([ti, bestDi]); }\n}\n\n// 4. Update matched tracks (EMA smoothing, history append, occlusion flag).\nconst a = TUNE.posSmoothingAlpha;\nfor (const m of matches) {\n    const t = tracks[m[0]], d = dets[m[1]];\n    t.recoveredFromOcclusion = (t.framesSinceLastMatch || 0) >= 3;\n    t.framesSinceLastMatch = 0;\n    t.box.x = a*d.box.x + (1-a)*t.box.x;\n    t.box.y = a*d.box.y + (1-a)*t.box.y;\n    t.box.w = a*d.box.w + (1-a)*t.box.w;\n    t.box.h = a*d.box.h + (1-a)*t.box.h;\n    t.foot.x = a*d.foot.x + (1-a)*t.foot.x;\n    t.foot.y = a*d.foot.y + (1-a)*t.foot.y;\n    t.hits += 1;\n    t.age = 0;\n    const wasConfirmed = t.confirmed;\n    if (t.hits >= TUNE.trackConfirmHits) t.confirmed = true;\n    t.justConfirmed = !wasConfirmed && t.confirmed;\n    t.insideHistory.push(inPoly({ x: t.foot.x, y: t.foot.y }, poly));\n    if (t.insideHistory.length > 32) t.insideHistory.shift();\n    t.posHistory.push({ x: t.foot.x, y: t.foot.y, frame });\n    if (t.posHistory.length > 16) t.posHistory.shift();\n}\n\n// 5. Spawn new tracks with state inheritance from recently-died nearby tracks.\nlet nid = context.get('nextId') || 1;\nconst GRAVEYARD_PX = 100;\nconst GRAVEYARD_FRAMES = 30;\nlet graveyard = (context.get('graveyard') || []).filter(g => frame - g.diedFrame < GRAVEYARD_FRAMES);\nfor (let di = 0; di < dets.length; di++) {\n    if (usedD.has(di)) continue;\n    const d = dets[di];\n    let inh = null, inhDist = GRAVEYARD_PX;\n    for (const g of graveyard) {\n        const gd = Math.hypot(g.foot.x - d.foot.x, g.foot.y - d.foot.y);\n        if (gd < inhDist) { inhDist = gd; inh = g; }\n    }\n    const fInside = inPoly({ x: d.foot.x, y: d.foot.y }, poly);\n    // Crossing inference from presence trail.\n    let pendingEvent = null;\n    if (!inh) {\n        let foundOpposite = false, foundSame = false;\n        for (const e of presenceTrail) {\n            if (frame - e.frame < 1) continue;\n            const tdx = e.x - d.foot.x;\n            const tdy = e.y - d.foot.y;\n            const parDist = Math.abs(tdx * lineDir.x + tdy * lineDir.y);\n            if (parDist > TUNE.inferenceParallelMaxPx) continue;\n            if (e.inside === fInside) foundSame = true;\n            else foundOpposite = true;\n        }\n        if (foundOpposite && !foundSame) {\n            pendingEvent = eventForArea(fInside);\n        }\n    }\n    tracks.push({\n        id: nid++,\n        box: { x: d.box.x, y: d.box.y, w: d.box.w, h: d.box.h },\n        foot: { x: d.foot.x, y: d.foot.y },\n        hits: 1, age: 0, confirmed: false,\n        insideHistory: [fInside],\n        firstInside: fInside,\n        posHistory: [{ x: d.foot.x, y: d.foot.y, frame }],\n        lastCountFrame: inh ? inh.lastCountFrame : -999,\n        lastEventType: inh ? inh.lastEventType : null,\n        state: inh ? inh.state : null,\n        lastStateChangeFrame: inh ? inh.lastStateChangeFrame : null,\n        framesSinceLastMatch: 0,\n        recoveredFromOcclusion: false,\n        justConfirmed: false,\n        pendingInferenceEvent: pendingEvent\n    });\n}\ncontext.set('nextId', nid);\n\n// 6. Age unmatched tracks; move expired ones to graveyard before removing.\nfor (let ti = 0; ti < tracks.length; ti++) {\n    if (!usedT.has(ti)) {\n        tracks[ti].age += 1;\n        tracks[ti].framesSinceLastMatch = (tracks[ti].framesSinceLastMatch || 0) + 1;\n    }\n}\nconst dying = [];\nconst surviving = [];\nfor (const t of tracks) {\n    if (t.age > TUNE.trackMaxAge) dying.push(t);\n    else surviving.push(t);\n}\nfor (const t of dying) {\n    if (t.confirmed) {\n        graveyard.push({\n            foot: { x: t.foot.x, y: t.foot.y },\n            state: t.state,\n            lastStateChangeFrame: t.lastStateChangeFrame,\n            lastEventType: t.lastEventType,\n            lastCountFrame: t.lastCountFrame,\n            diedFrame: frame\n        });\n    }\n}\ntracks = surviving;\ncontext.set('graveyard', graveyard);\ncontext.set('presenceTrail', presenceTrail);\n\n// 7. Counting with hysteresis + perp-velocity gate + region cooldown.\nlet recentEvents = context.get('recentEvents') || [];\nconst events = [];\n// State machine: immediate-transition with occlusion-aware validation.\nconst validateMotion = (t) => {\n    if (t.recoveredFromOcclusion) return true;\n    const k = TUNE.perpVelocityWindowFrames;\n    if (t.posHistory.length < k) return true;\n    const p0 = t.posHistory[t.posHistory.length - k];\n    const p1 = t.posHistory[t.posHistory.length - 1];\n    const perpComp = (p1.x - p0.x) * nrm.x + (p1.y - p0.y) * nrm.y;\n    return Math.abs(perpComp) >= TUNE.perpVelocityMinPx;\n};\nfor (const t of tracks) {\n    if (!t.confirmed) continue;\n    const H = t.insideHistory;\n    if (!H.length) continue;\n    const currentInside = H[H.length - 1];\n    const currentStateName = currentInside ? 'inside' : 'outside';\n\n    // Initial state adoption. Prefer spawn-time inference event from trail;\n    // fall back to firstInside vs current check.\n    if (t.state == null) {\n        t.state = currentStateName;\n        t.lastStateChangeFrame = frame;\n        let inferredEvent = t.pendingInferenceEvent;\n        if (!inferredEvent) {\n            const initialStateName = t.firstInside ? 'inside' : 'outside';\n            if (initialStateName !== currentStateName) {\n                inferredEvent = eventForArea(currentInside);\n            }\n        }\n        if (inferredEvent && validateMotion(t)) {\n            t._pendingEvent = inferredEvent;\n        }\n        t.pendingInferenceEvent = null;\n    } else if (t.state !== currentStateName) {\n        if (frame - (t.lastStateChangeFrame || -999) < TUNE.minStateDwellFrames) continue;\n        if (!validateMotion(t)) continue;\n        t.state = currentStateName;\n        t.lastStateChangeFrame = frame;\n        t._pendingEvent = eventForArea(currentInside);\n    }\n    if (!t._pendingEvent) continue;\n    const event = t._pendingEvent;\n    t._pendingEvent = null;\n\n    events.push({ type: event, track_id: t.id });\n    t.lastCountFrame = frame;\n    t.lastEventType = event;\n}\ncontext.set('tracks', tracks);\ncontext.set('recentEvents', recentEvents);\n\n// Status line: confirmed track count + inROI count.\nlet inRoi = 0, confirmedN = 0;\nfor (const t of tracks) {\n    if (!t.confirmed) continue;\n    confirmedN++;\n    if (inPoly({ x: t.foot.x, y: t.foot.y }, poly)) inRoi++;\n}\nconst statusText = 'tracks:' + confirmedN + ' inROI:' + inRoi + ' det:' + dets.length + ' ev:' + events.length;\nnode.status({ fill: events.length > 0 ? 'red' : (inRoi > 0 ? 'yellow' : 'green'), shape: 'dot', text: statusText });\nflow.set('last_track_status', {\n    frame,\n    detections: dets.length,\n    raw_boxes: Array.isArray(boxes) ? boxes.length : 0,\n    tracks: tracks.length,\n    confirmed: confirmedN,\n    in_roi: inRoi,\n    events: events.length,\n    note: events.length ? 'event' : 'tracking',\n    ts: now\n});\n\nif (events.length === 0) return null;\nconst deviceId = flow.get('device_id') || 'unknown';\nconst doorLabel = flow.get('door_label') || '?';\nfor (const e of events) {\n    if (e.type === 'ENTRY') flow.set('event_entry_count', (flow.get('event_entry_count') || 0) + 1);\n    if (e.type === 'EXIT') flow.set('event_exit_count', (flow.get('event_exit_count') || 0) + 1);\n    flow.set('last_event', e.type + ' track=' + e.track_id + ' ts=' + now);\n    node.warn('Publishing ' + e.type + ' to eagle/' + deviceId + '/event track=' + e.track_id);\n    node.send({\n        topic: 'eagle/' + deviceId + '/event',\n        payload: JSON.stringify({ type: e.type, track_id: e.track_id, door: doorLabel, ts: now })\n    });\n}\nreturn null;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 610,
+        "y": 260,
+        "wires": [
+            [
+                "prod_mqtt"
+            ]
+        ]
+    },
+    {
+        "id": "prod_mqtt",
+        "type": "mqtt out",
+        "z": "flow_prod",
+        "name": "MQTT Publish",
+        "topic": "",
+        "qos": "1",
+        "retain": "false",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "mqtt_broker_cfg",
+        "x": 790,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "prod_hb_inject",
+        "type": "inject",
+        "z": "flow_prod",
+        "name": "Heartbeat 2s",
+        "props": [
+            {
+                "p": "topic",
+                "vt": "str",
+                "v": "heartbeat"
+            }
+        ],
+        "repeat": "2",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "5",
+        "topic": "heartbeat",
+        "x": 110,
+        "y": 360,
+        "wires": [
+            [
+                "prod_hb_func"
+            ]
+        ]
+    },
+    {
+        "id": "prod_hb_func",
+        "type": "function",
+        "z": "flow_prod",
+        "name": "Build Heartbeat",
+        "func": "const deviceId = flow.get('device_id') || 'unknown';\nconst doorLabel = flow.get('door_label') || '?';\nconst now = Date.now();\nconst track = flow.get('last_track_status') || {};\nmsg.topic = 'eagle/' + deviceId + '/heartbeat';\nmsg.payload = JSON.stringify({\n    door: doorLabel,\n    uptime_ms: now - (flow.get('start_time') || now),\n    ts: now,\n    system_ready: !!global.get('system_ready'),\n    gate: flow.get('last_gate_status') || 'unknown',\n    config_error: !!flow.get('config_error'),\n    roi_error: !!flow.get('roi_error'),\n    counts: {\n        entries: flow.get('event_entry_count') || 0,\n        exits: flow.get('event_exit_count') || 0,\n        last_event: flow.get('last_event') || '-'\n    },\n    tracking: {\n        frame: track.frame || 0,\n        detections: track.detections || 0,\n        tracks: track.tracks || 0,\n        confirmed: track.confirmed || 0,\n        in_roi: track.in_roi || 0,\n        events: track.events || 0,\n        note: track.note || '-'\n    }\n});\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 290,
+        "y": 360,
+        "wires": [
+            [
+                "prod_mqtt"
+            ]
+        ]
+    },
+    {
+        "id": "prod_presence",
+        "type": "function",
+        "z": "flow_prod",
+        "name": "Interior Presence >2s",
+        "func": "// Runs beside Track + Count. Every camera publishes; ESP32 selects the inside ID.\nconst CONFIRM_MS = 2000;\nconst CLEAR_MS = 2000;\nconst MAX_FRAME_GAP_MS = 750;\nconst STALE_MS = 1000;\nconst PUBLISH_MS = 500;\nconst MIN_CONFIDENCE = 0.45;\nconst now = Date.now();\nlet s = context.get('presence') || {\n    lastFrame: 0, candidateSince: null, clearSince: null,\n    present: false, confirmedMs: 0, state: 'unknown', candidates: 0, blockers: 0,\n    lastPublish: 0, configKey: ''\n};\nconst cfg = global.get('roi_config');\nconst deviceId = flow.get('device_id') || 'unknown';\nconst ready = !!global.get('system_ready') && deviceId !== 'unknown' &&\n    cfg && Array.isArray(cfg.polygon) && cfg.polygon.length >= 3;\nfunction inPoly(pt, p) {\n    let inside = false;\n    for (let i = 0, j = p.length - 1; i < p.length; j = i++) {\n        const a = p[i], b = p[j];\n        if (((a[1] > pt.y) !== (b[1] > pt.y)) &&\n            pt.x < (b[0] - a[0]) * (pt.y - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside;\n    }\n    return inside;\n}\nconst configKey = ready ? JSON.stringify([cfg.polygon, cfg.masks, cfg.presence_polygon]) : '';\nif (configKey !== s.configKey) {\n    s = { lastFrame: 0, candidateSince: null, clearSince: null, present: false, confirmedMs: 0,\n        state: 'unknown', candidates: 0, blockers: 0, lastPublish: 0, configKey };\n}\nconst tick = msg.topic === '__presence_tick';\nif (!tick && ready) {\n    const data = msg.payload && (msg.payload.data || msg.payload);\n    // A missing boxes array is invalid, NOT an empty detection frame.\n    if (data && Array.isArray(data.boxes)) {\n        const gap = s.lastFrame ? now - s.lastFrame : Infinity;\n        if (gap > MAX_FRAME_GAP_MS) {\n            s.candidateSince = null;\n            s.clearSince = null;\n            s.state = s.present ? 'present' : 'unknown';\n        }\n        s.lastFrame = now;\n        const labels = Array.isArray(data.labels) && data.labels.length ? data.labels : ['person'];\n        const masks = Array.isArray(cfg.masks) ? cfg.masks : [];\n        const interior = Array.isArray(cfg.presence_polygon) && cfg.presence_polygon.length >= 3\n            ? cfg.presence_polygon : null;\n        let candidates = 0, blockers = 0;\n        for (const b of data.boxes) {\n            if (!Array.isArray(b) || b.length < 6) continue;\n            const [cx, cy, w, h] = b.slice(0, 4).map(Number);\n            let score = Number(b[4]), cls = Number(b[5]);\n            if (!Number.isInteger(cls) && Number.isInteger(Number(b[4]))) {\n                cls = Number(b[4]); score = Number(b[5]);\n            }\n            if (![cx, cy, w, h, score].every(Number.isFinite) || w <= 0 || h <= 0 ||\n                score < MIN_CONFIDENCE) continue;\n            const label = String(labels[cls] || (cls === 0 ? 'person' : '')).toLowerCase();\n            if (label !== 'person') continue;\n            const foot = { x: cx, y: cy + h / 2 };\n            if (masks.some(m => Array.isArray(m) && m.length >= 3 && inPoly(foot, m))) continue;\n            const inDoor = inPoly(foot, cfg.polygon);\n            const inInterior = !interior || inPoly(foot, interior);\n            // Door detections block clearing while someone walks out of the presence zone.\n            if (inDoor || inInterior) blockers++;\n            if (!inDoor && inInterior) candidates++;\n        }\n        s.candidates = candidates; s.blockers = blockers;\n        if (candidates > 0) {\n            s.clearSince = null;\n            if (s.candidateSince === null) s.candidateSince = now;\n            if (!s.present && now - s.candidateSince > CONFIRM_MS) {\n                s.present = true;\n                s.confirmedMs = now - s.candidateSince;\n            }\n            s.state = s.present ? 'present' : 'pending';\n        } else {\n            s.candidateSince = null;\n            if (blockers > 0) {\n                s.clearSince = null;\n                s.state = s.present ? 'present' : 'pending';\n            } else {\n                if (s.clearSince === null) s.clearSince = now;\n                if (now - s.clearSince >= CLEAR_MS) {\n                    s.present = false; s.confirmedMs = 0; s.state = 'clear';\n                } else {\n                    s.state = s.present ? 'present' : 'pending';\n                }\n            }\n        }\n    } else {\n        // Invalid inference data breaks continuity and cannot establish a clear cell.\n        s.lastFrame = 0;\n        s.candidateSince = null;\n        s.clearSince = null;\n        s.state = 'unknown';\n    }\n}\nconst valid = !!ready && s.lastFrame > 0 && now - s.lastFrame <= STALE_MS;\nif (!valid) {\n    s.candidateSince = null; s.clearSince = null;\n    s.state = 'unknown';\n}\ncontext.set('presence', s);\nflow.set('last_presence_status', { state: valid ? s.state : 'unknown', valid,\n    candidates: s.candidates, frame_age_ms: s.lastFrame ? now - s.lastFrame : -1 });\nnode.status({ fill: !valid ? 'grey' : (s.present ? 'red' : (s.state === 'clear' ? 'green' : 'yellow')),\n    shape: 'dot', text: 'presence: ' + (valid ? s.state : 'unknown') });\nif (deviceId === 'unknown' || now - s.lastPublish < PUBLISH_MS) return null;\ns.lastPublish = now;\ncontext.set('presence', s);\nreturn { topic: 'eagle/' + deviceId + '/presence', payload: JSON.stringify({\n    state: valid ? s.state : 'unknown', valid,\n    present: valid && s.present,\n    candidates: s.candidates,\n    continuous_ms: valid && s.candidateSince !== null ? now - s.candidateSince : 0,\n    confirmed_ms: valid && s.present ? s.confirmedMs : 0,\n    frame_age_ms: s.lastFrame ? now - s.lastFrame : -1,\n    door: flow.get('door_label') || '?', ts: now\n}) };\n",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "context.set('presence', null);",
+        "finalize": "",
+        "libs": [],
+        "x": 570,
+        "y": 440,
+        "wires": [
+            [
+                "prod_mqtt"
+            ]
+        ]
+    },
+    {
+        "id": "prod_presence_tick",
+        "type": "inject",
+        "z": "flow_prod",
+        "name": "Presence freshness 500ms",
+        "props": [
+            {
+                "p": "topic",
+                "vt": "str"
+            }
+        ],
+        "repeat": "0.5",
+        "crontab": "",
+        "once": true,
+        "onceDelay": "5",
+        "topic": "__presence_tick",
+        "x": 270,
+        "y": 440,
+        "wires": [
+            [
+                "prod_presence"
+            ]
+        ]
+    }
+]

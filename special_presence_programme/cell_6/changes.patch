@@ -1,0 +1,511 @@
+--- reference_original.txt
++++ cell_6.ino
+@@ -1,4 +1,5 @@
+ /*
++ * CELL 6 — full supplied production programme with independent interior presence.
+  * Waveshare ESP32-S3-ETH variant with onboard W5500 Ethernet.
+  * Uses GPIO numbers directly.
+  *
+@@ -7,17 +8,16 @@
+  *   MISO GPIO12
+  *   MOSI GPIO11
+  *   CS   GPIO14
+- *   RST  GPIO9
+- *   INT  GPIO10
++ *   RST/INT disabled in this programme (ETH_SPI_RST/IRQ = -1)
+  *
+  * Relay outputs, current installation mapping:
+- *   RED + Buzzer : GPIO6
+- *   GREEN        : GPIO43
+- *   YELLOW       : GPIO4
+- *   HEALTHY/MAIN : GPIO1
++ *   RED + Buzzer : GPIO21
++ *   GREEN        : GPIO18
++ *   YELLOW       : GPIO17
++ *   HEALTHY/MAIN : GPIO16
+  *
+  * Reset/start input:
+- *   GPIO3 ADC input through optocoupler workaround
++ *   GPIO47 digital NC green button input
+  */
+ 
+ #include <SPI.h>
+@@ -28,7 +28,7 @@
+ #include <SPIFFS.h>
+ 
+ // ============== FIRMWARE VERSION ==============
+-#define FW_VERSION "1.6.0-max-exit-nc-camera-fail-continue"
++#define FW_VERSION "1.7.1-cell-6-interior-presence"
+ 
+ // ============== W5500 SPI PINS ==============
+ #define ETH_SPI_SCK   13
+@@ -97,14 +97,24 @@
+ #define LOG_PATH              "/log/events.csv"
+ #define LOG_PREV_PATH         "/log/events_prev.csv"
+ 
++// ============== CELL 6 CAMERA CONFIGURATION ==============
++// SET THESE TO YOUR PHYSICAL CAMERA IDs BEFORE UPLOADING.
++// Both cameras must use door E1 in their reCamera Device Identity configuration.
++// Blank defaults intentionally prevent RUN until the inside/outside roles are assigned.
++#define CELL_6_INSIDE_CAMERA_ID  ""
++#define CELL_6_OUTSIDE_CAMERA_ID ""
++#define PRESENCE_CONFIRM_MS 2000UL          // More than 2s, confirmed by camera flow
++#define PRESENCE_SOURCE_MAX_AGE_MS 1000UL   // Camera's reported source-frame age
++#define PRESENCE_MESSAGE_TIMEOUT_MS 1500UL // No fresh presence message = unknown
++
+ const char DEVICE_ID[] = "composite_hub";
+ 
+ // ============== EXPECTED CAMERA ROSTER ==============
+ // Edit at deployment. System FAULTs on boot if any of these are not reporting.
+ struct ExpectedCamera { const char* id; const char* doorLabel; };
+ const ExpectedCamera EXPECTED_CAMERAS[] = {
+-     { "TM_R1_01", "E1" },
+-    { "TM_R1_02", "E1" },
++    { CELL_6_INSIDE_CAMERA_ID, "E1" },
++    { CELL_6_OUTSIDE_CAMERA_ID, "E1" },
+ };
+ #define EXPECTED_CAMERA_COUNT (sizeof(EXPECTED_CAMERAS) / sizeof(EXPECTED_CAMERAS[0]))
+ 
+@@ -136,6 +146,16 @@
+   bool hasSeen;               // Have we ever heard from this camera?
+   bool disconnected;          // Currently considered offline?
+   unsigned long disconnectedSince;
++
++  // Independent presence state. Never substitutes for camera ENTRY/EXIT counters.
++  bool isInsideCamera;
++  bool presenceSeen;
++  bool presenceValid;
++  bool presenceLatched;
++  bool presenceClear;
++  unsigned long lastPresence;
++  long presenceFrameAge;
++  char presenceState[12];
+ };
+ 
+ #define MAX_CAMERAS 4
+@@ -162,7 +182,10 @@
+ unsigned long lastCountsSave = 0;
+ 
+ // Aggregation
+-int currentOccupancy = 0;
++int currentOccupancy = 0;       // Effective occupancy used by relays/dashboard
++int countedOccupancy = 0;       // Unmodified MAX ENTRY - MAX EXIT result
++bool presenceOverride = false;
++bool cameraRolesValid = false;
+ unsigned long lastStatusPublish = 0;
+ unsigned long lastWatchdog = 0;
+ unsigned long lastDiag = 0;
+@@ -196,13 +219,15 @@
+ // Diagnostics counters
+ unsigned long msgCountEvent = 0;
+ unsigned long msgCountHeartbeat = 0;
++unsigned long msgCountPresence = 0;
++unsigned long errPresence = 0;
+ unsigned long errJsonParse = 0;
+ unsigned long errOversizedPayload = 0;
+ unsigned long errUnknownEvent = 0;
+ 
+ // JSON publish buffer
+ JsonDocument pubDoc;
+-char pubBuf[1024];
++char pubBuf[4096]; // Extra presence diagnostics; checked before serializing
+ 
+ // State name lookup (must match SystemState enum order)
+ const char* stateNames[] = {
+@@ -224,6 +249,9 @@
+   strncpy(cameraIds[idx], id, 31);
+   cameraIds[idx][31] = '\0';
+   memset(&cameras[idx], 0, sizeof(CameraState));
++  cameras[idx].isInsideCamera = strcmp(id, CELL_6_INSIDE_CAMERA_ID) == 0;
++  cameras[idx].presenceFrameAge = -1;
++  strcpy(cameras[idx].presenceState, "unknown");
+   strncpy(cameras[idx].doorLabel, doorLabel, sizeof(cameras[idx].doorLabel) - 1);
+   Serial.print(F("[CAM] Registered: "));
+   Serial.print(id);
+@@ -304,6 +332,123 @@
+   Serial.println(F("=== EVENT LOG END ==="));
+ }
+ 
++// ============== CELL 6 INDEPENDENT INTERIOR PRESENCE ==============
++// The companion reCamera flow observes fresh, unmasked detections outside the
++// door ROI (within its optional interior polygon), confirms >2s presence and
++// confirms clear after 2s without a person in either interior or door ROI.
++// Only the configured INSIDE camera is authoritative here.
++
++bool insidePresenceFresh(const CameraState& cam, unsigned long now) {
++  return cam.presenceSeen && cam.presenceValid &&
++         now - cam.lastPresence <= PRESENCE_MESSAGE_TIMEOUT_MS;
++}
++
++bool anyInsidePresenceLatched() {
++  for (int i = 0; i < cameraCount; i++) {
++    if (cameras[i].isInsideCamera && cameras[i].presenceLatched) return true;
++  }
++  return false;
++}
++
++bool insidePresenceReadyForEmpty(unsigned long now) {
++  if (!cameraRolesValid) return false;
++  bool foundInside = false;
++  for (int i = 0; i < cameraCount; i++) {
++    const CameraState& cam = cameras[i];
++    if (!cam.isInsideCamera) continue;
++    foundInside = true;
++    if (!insidePresenceFresh(cam, now) || !cam.presenceClear || cam.presenceLatched) return false;
++  }
++  return foundInside;
++}
++
++bool validateCell6CameraRoles() {
++  const char* inside = CELL_6_INSIDE_CAMERA_ID;
++  const char* outside = CELL_6_OUTSIDE_CAMERA_ID;
++  if (!inside[0] || !outside[0] || strlen(inside) >= sizeof(cameraIds[0]) ||
++      strlen(outside) >= sizeof(cameraIds[0]) || strcmp(inside, outside) == 0) return false;
++  if (strchr(inside, '/') || strchr(inside, '+') || strchr(inside, '#') ||
++      strchr(outside, '/') || strchr(outside, '+') || strchr(outside, '#')) return false;
++  if (strcmp(inside, "unknown") == 0 || strcmp(inside, "system") == 0 ||
++      strcmp(inside, "controller") == 0 || strcmp(inside, DEVICE_ID) == 0 ||
++      strcmp(outside, "unknown") == 0 || strcmp(outside, "system") == 0 ||
++      strcmp(outside, "controller") == 0 || strcmp(outside, DEVICE_ID) == 0) return false;
++  if (EXPECTED_CAMERA_COUNT != 2 || cameraCount != 2) return false;
++  int inIdx = findCamera(inside), outIdx = findCamera(outside);
++  return inIdx >= 0 && outIdx >= 0 && inIdx != outIdx &&
++         strcmp(cameras[inIdx].doorLabel, cameras[outIdx].doorLabel) == 0;
++}
++
++void invalidateInsidePresence(int idx) {
++  CameraState& cam = cameras[idx];
++  cam.presenceValid = false;
++  cam.presenceClear = false;
++  strcpy(cam.presenceState, "unknown");
++  // Unknown/invalid data must not erase an already-confirmed person.
++  refreshRunOutputs();
++}
++
++void handleInsidePresence(int idx, const char* payload, unsigned long now) {
++  CameraState& cam = cameras[idx];
++  if (!cam.isInsideCamera) return; // Outside camera presence cannot alter occupancy.
++  msgCountPresence++;
++  if (strlen(payload) > MAX_PAYLOAD_BYTES) {
++    errOversizedPayload++;
++    invalidateInsidePresence(idx);
++    return;
++  }
++  JsonDocument doc;
++  if (deserializeJson(doc, payload)) {
++    errJsonParse++;
++    invalidateInsidePresence(idx);
++    return;
++  }
++  if (!doc["valid"].is<bool>() || !doc["present"].is<bool>() ||
++      !doc["state"].is<const char*>() || !doc["frame_age_ms"].is<long>()) {
++    errPresence++;
++    invalidateInsidePresence(idx);
++    return;
++  }
++  const char* state = doc["state"];
++  bool present = doc["present"].as<bool>();
++  bool isPresent = strcmp(state, "present") == 0;
++  bool isClear = strcmp(state, "clear") == 0;
++  bool isPending = strcmp(state, "pending") == 0;
++  bool isUnknown = strcmp(state, "unknown") == 0;
++  if ((!isPresent && !isClear && !isPending && !isUnknown) ||
++      (isPresent != present && !isUnknown)) {
++    errPresence++;
++    invalidateInsidePresence(idx);
++    return;
++  }
++  long frameAge = doc["frame_age_ms"].as<long>();
++  bool valid = doc["valid"].as<bool>() && !isUnknown && frameAge >= 0 &&
++               (unsigned long)frameAge <= PRESENCE_SOURCE_MAX_AGE_MS;
++  // Retained duration proves >2s even if the person has since moved into door ROI.
++  unsigned long confirmedMs = doc["confirmed_ms"] | 0UL;
++  if (valid && isPresent && !cam.presenceLatched &&
++      (!doc["confirmed_ms"].is<unsigned long>() || confirmedMs <= PRESENCE_CONFIRM_MS)) {
++    errPresence++;
++    invalidateInsidePresence(idx);
++    return;
++  }
++  bool wasLatched = cam.presenceLatched;
++  cam.presenceSeen = true;
++  cam.presenceValid = valid;
++  cam.presenceClear = valid && isClear && !present;
++  cam.lastPresence = now;
++  cam.presenceFrameAge = frameAge;
++  strncpy(cam.presenceState, valid ? state : "unknown", sizeof(cam.presenceState) - 1);
++  cam.presenceState[sizeof(cam.presenceState) - 1] = '\0';
++  if (valid && isPresent && present) cam.presenceLatched = true;
++  if (cam.presenceClear) cam.presenceLatched = false;
++  if (wasLatched != cam.presenceLatched) {
++    logEvent(cam.presenceLatched ? "PRESENCE_ON" : "PRESENCE_CLEAR", cameraIds[idx]);
++  }
++  recomputeOccupancyFromCameraTotals();
++  refreshRunOutputs();
++}
++
+ // ============== COUNTER PERSISTENCE ==============
+ 
+ // Merge cameras on one physical door: ENTRY and EXIT both use the maximum camera count.
+@@ -362,17 +507,21 @@
+   long net = (long)totalIn - (long)totalOut;
+   if (net < 0) net = 0;
+   if (net > MAX_OCCUPANCY) net = MAX_OCCUPANCY;
+-  currentOccupancy = (int)net;
++  countedOccupancy = (int)net;
++  presenceOverride = countedOccupancy == 0 && anyInsidePresenceLatched();
++  currentOccupancy = presenceOverride ? 1 : countedOccupancy;
+   return currentOccupancy;
+ }
+ 
+ void resetSessionCountsForVacancy(const char* reason) {
++  // Do not erase a session while the independent interior check is occupied/unknown.
++  if (currentOccupancy != 0 || !insidePresenceReadyForEmpty(millis())) return;
+   for (int i = 0; i < cameraCount; i++) {
+     cameras[i].entries = 0;
+     cameras[i].exits = 0;
+   }
+ 
+-  currentOccupancy = 0;
++  recomputeOccupancyFromCameraTotals();
+   countsDirty = true;
+ 
+   char detail[80];
+@@ -515,6 +664,10 @@
+         roomWasOccupied = true;
+         vacancyClearActive = false;
+         setRunOccupiedOutputs();
++      } else if (!insidePresenceReadyForEmpty(millis())) {
++        roomWasOccupied = true;
++        vacancyClearActive = false;
++        setRunOccupiedOutputs(); // Pending/stale interior data cannot enable robot.
+       } else {
+         roomWasOccupied = false;
+         vacancyClearActive = false;
+@@ -563,6 +716,13 @@
+     return;
+   }
+ 
++  if (!insidePresenceReadyForEmpty(millis())) {
++    roomWasOccupied = true;
++    vacancyClearActive = false;
++    setRunOccupiedOutputs();
++    return;
++  }
++
+   if (roomWasOccupied && !vacancyClearActive) {
+     vacancyClearActive = true;
+     vacancyClearStarted = millis();
+@@ -600,7 +760,10 @@
+ }
+ 
+ void updateRunOutputTimers(unsigned long now) {
+-  if (currentState != STATE_RUN || !vacancyClearActive) return;
++  if (currentState != STATE_RUN) return;
++  // Check message freshness on every loop, including when no new MQTT data arrives.
++  refreshRunOutputs();
++  if (!vacancyClearActive) return;
+ 
+   if (currentOccupancy > 0) {
+     vacancyClearActive = false;
+@@ -627,7 +790,8 @@
+   return currentState == STATE_MAINTENANCE ||
+          (currentState == STATE_RUN &&
+           currentOccupancy == 0 &&
+-          !vacancyClearActive);
++          !vacancyClearActive &&
++          insidePresenceReadyForEmpty(millis()));
+ }
+ 
+ // ============== MQTT MESSAGE HANDLER ==============
+@@ -656,6 +820,12 @@
+ 
+   unsigned long now = millis();
+ 
++  // Presence ticks do not substitute for a camera heartbeat or crossing event.
++  if (topicEndsWith(topic, "/presence")) {
++    handleInsidePresence(idx, payload, now);
++    return;
++  }
++
+   if (cameras[idx].disconnected) {
+     cameras[idx].disconnected = false;
+     cameras[idx].disconnectedSince = 0;
+@@ -707,8 +877,9 @@
+       refreshRunOutputs();
+ 
+     } else if (strcmp(type, "EXIT") == 0) {
+-      if (currentOccupancy == 0) {
+-        Serial.print(F("[COUNT] Ignored EXIT while occupancy is already zero from "));
++      // Presence supplies a floor, not a synthetic ENTRY. Preserve normal zero-count EXIT behaviour.
++      if (countedOccupancy == 0) {
++        Serial.print(F("[COUNT] Ignored EXIT while normal counted occupancy is already zero from "));
+         Serial.println(devId);
+ 
+         char detail[64];
+@@ -753,6 +924,8 @@
+     cameras[i].exits = 0;
+   }
+   currentOccupancy = 0;
++  countedOccupancy = 0;
++  presenceOverride = false;
+   roomWasOccupied = false;
+   vacancyClearActive = false;
+   runRedBlinkOn = false;
+@@ -774,7 +947,8 @@
+     cameras[i].entries = 0;
+     cameras[i].exits = 0;
+   }
+-  currentOccupancy = 0;
++  // Clearing counters cannot clear a confirmed person from the interior camera.
++  recomputeOccupancyFromCameraTotals();
+   roomWasOccupied = (currentState == STATE_RUN);
+   vacancyClearActive = false;
+   runRedBlinkOn = false;
+@@ -845,7 +1019,7 @@
+   if (cameraCount == 0) return;
+   if (startupSettling) return;
+   // Step 1: Detect camera timeouts
+-  bool anyFault = false;
++  bool anyFault = !cameraRolesValid;
+   for (int i = 0; i < cameraCount; i++) {
+     if (cameras[i].hasSeen && !cameras[i].disconnected) {
+       unsigned long lastSeen = cameras[i].lastHb;
+@@ -898,6 +1072,12 @@
+   pubDoc.clear();
+   pubDoc["state"] = stateNames[currentState];
+   pubDoc["occupancy"] = currentOccupancy;
++  pubDoc["cell"] = "Cell 6";
++  pubDoc["counted_occupancy"] = countedOccupancy;
++  pubDoc["presence_override"] = presenceOverride;
++  pubDoc["presence_ready_for_empty"] = insidePresenceReadyForEmpty(now);
++  pubDoc["vacancy_clear_active"] = vacancyClearActive;
++  pubDoc["camera_roles_valid"] = cameraRolesValid;
+   pubDoc["relay"] = occupancyRelayActive();
+ 
+   unsigned long rawTotalIn = 0, rawTotalOut = 0;
+@@ -912,6 +1092,12 @@
+     cam["exits"] = cameras[i].exits;
+     cam["net"] = (long)cameras[i].entries - (long)cameras[i].exits;
+     cam["disconnected"] = cameras[i].disconnected;
++    cam["role"] = cameras[i].isInsideCamera ? "inside" : "outside";
++    if (cameras[i].isInsideCamera) {
++      cam["presence_state"] = insidePresenceFresh(cameras[i], now) ? cameras[i].presenceState : "unknown";
++      cam["presence_fresh"] = insidePresenceFresh(cameras[i], now);
++      cam["presence_latched"] = cameras[i].presenceLatched;
++    }
+     rawTotalIn += cameras[i].entries;
+     rawTotalOut += cameras[i].exits;
+   }
+@@ -935,6 +1121,10 @@
+   pubDoc["raw_total_net"] = (long)rawTotalIn - (long)rawTotalOut;
+   pubDoc["ts"] = now;
+ 
++  if (measureJson(pubDoc) >= sizeof(pubBuf)) {
++    logEvent("PUBLISH_ERROR", "JSON output buffer too small");
++    return;
++  }
+   serializeJson(pubDoc, pubBuf, sizeof(pubBuf));
+ #if RAW_STATUS_DEBUG
+   Serial.print(F("[RAW_OUT] topic=eagle/system/status payload="));
+@@ -1036,7 +1226,7 @@
+     snprintf(detail, sizeof(detail), "expected=%d,missing=%d", expectedCameras, missing);
+     logEvent("SETTLING_DONE", detail);
+ 
+-    if (CAMERA_FAILURE_TRIGGERS_FAULT && missing > 0) {
++    if (!cameraRolesValid || (CAMERA_FAILURE_TRIGGERS_FAULT && missing > 0)) {
+       changeState(STATE_FAULT);
+     } else {
+ #if BYPASS_AWAIT_START
+@@ -1115,16 +1305,27 @@
+   pubDoc["cameras"] = cameraCount;
+   pubDoc["state"] = stateNames[currentState];
+   pubDoc["occupancy"] = currentOccupancy;
++  pubDoc["cell"] = "Cell 6";
++  pubDoc["counted_occupancy"] = countedOccupancy;
++  pubDoc["presence_override"] = presenceOverride;
++  pubDoc["presence_ready_for_empty"] = insidePresenceReadyForEmpty(now);
++  pubDoc["camera_roles_valid"] = cameraRolesValid;
+ 
+   JsonObject msgs = pubDoc["msgs"].to<JsonObject>();
+   msgs["event"] = msgCountEvent;
+   msgs["hb"] = msgCountHeartbeat;
++  msgs["presence"] = msgCountPresence;
+ 
+   JsonObject errs = pubDoc["errs"].to<JsonObject>();
+   errs["json"] = errJsonParse;
+   errs["oversize"] = errOversizedPayload;
+   errs["unknown"] = errUnknownEvent;
+-
++  errs["presence"] = errPresence;
++
++  if (measureJson(pubDoc) >= sizeof(pubBuf)) {
++    logEvent("PUBLISH_ERROR", "JSON output buffer too small");
++    return;
++  }
+   serializeJson(pubDoc, pubBuf, sizeof(pubBuf));
+ #if RAW_STATUS_DEBUG
+   Serial.print(F("[RAW_OUT] topic=eagle/system/diag payload="));
+@@ -1186,7 +1387,7 @@
+   else Serial.print(F("0.0.0.0"));
+   Serial.println(F(" broker=192.168.10.1:1883"));
+ 
+-  Serial.print(F("[MQTT IN] subscribed=eagle/+/event,eagle/+/heartbeat events="));
++  Serial.print(F("[MQTT IN] subscribed=eagle/+/event,eagle/+/heartbeat,eagle/+/presence events="));
+   Serial.print(msgCountEvent);
+   Serial.print(F(" hb="));
+   Serial.print(msgCountHeartbeat);
+@@ -1239,6 +1440,17 @@
+     Serial.println((long)doors[i].entries - (long)doors[i].exits);
+   }
+ 
++  Serial.printf("[CELL 6] counted=%d effective=%d presence_override=%s clear_ready=%s roles_valid=%s presence_msgs=%lu errors=%lu\n",
++                countedOccupancy, currentOccupancy, presenceOverride ? "YES" : "NO",
++                insidePresenceReadyForEmpty(now) ? "YES" : "NO", cameraRolesValid ? "YES" : "NO",
++                msgCountPresence, errPresence);
++  for (int i = 0; i < cameraCount; i++) {
++    if (!cameras[i].isInsideCamera) continue;
++    Serial.printf("[INTERIOR] id=%s state=%s latched=%s age_ms=%ld\n", cameraIds[i],
++                  insidePresenceFresh(cameras[i], now) ? cameras[i].presenceState : "unknown",
++                  cameras[i].presenceLatched ? "YES" : "NO",
++                  cameras[i].presenceSeen ? (long)(now - cameras[i].lastPresence) : -1L);
++  }
+   Serial.println(F("[CAMERAS] raw per-camera data"));
+   if (cameraCount == 0) {
+     Serial.println(F("  none"));
+@@ -1349,7 +1561,7 @@
+ // ============== SETUP ==============
+ 
+ void setup() {
+-  Serial.begin(115200);
++  Serial.begin(115200); // Cell 6 — full original programme retained
+   delay(1000);
+ 
+   Serial.println(F("================================================"));
+@@ -1425,7 +1637,10 @@
+   mqttBroker.subscribe("eagle/+/heartbeat", [](const char* topic, const char* payload) {
+     onMqttMessage(topic, payload);
+   });
+-  Serial.println(F("[MQTT] Subscribed: event + heartbeat"));
++  mqttBroker.subscribe("eagle/+/presence", [](const char* topic, const char* payload) {
++    onMqttMessage(topic, payload);
++  });
++  Serial.println(F("[MQTT] Subscribed: event + heartbeat + presence"));
+ 
+   mqttBroker.begin();
+ 
+@@ -1434,6 +1649,15 @@
+   Serial.println(EXPECTED_CAMERA_COUNT);
+   for (size_t i = 0; i < EXPECTED_CAMERA_COUNT; i++) {
+     addCamera(EXPECTED_CAMERAS[i].id, EXPECTED_CAMERAS[i].doorLabel);
++  }
++
++  cameraRolesValid = validateCell6CameraRoles();
++  if (!cameraRolesValid) {
++    logEvent("CONFIG_ERROR", "Cell 6: set distinct inside/outside camera IDs before use");
++    Serial.println(F("[CELL 6] CAMERA ROLES INVALID — robot will remain disabled outside maintenance mode"));
++  } else {
++    Serial.print(F("[CELL 6] INSIDE=")); Serial.println(CELL_6_INSIDE_CAMERA_ID);
++    Serial.print(F("[CELL 6] OUTSIDE=")); Serial.println(CELL_6_OUTSIDE_CAMERA_ID);
+   }
+ 
+   // Start every boot/demo from zero counts.
