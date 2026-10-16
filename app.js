@@ -25,6 +25,7 @@ const mjpegPreviewUrl = "/live.mjpg";
 const fixedPreviewUrl = liveMode === "hls" ? hlsPreviewUrl : liveMode === "mjpeg" ? mjpegPreviewUrl : webrtcPreviewUrl;
 const directVideoExtensions = [".mp4", ".webm", ".ogg", ".mov"];
 let hlsPlayer = null;
+let nativePreview = null;
 let recordingHlsPlayer = null;
 let activeView = "liveView";
 let recordingFallbackClip = null;
@@ -281,9 +282,9 @@ function loadPreviewPage(url) {
   video.removeAttribute("src");
   video.load();
   video.hidden = true;
-  frame.src = url;
   frame.hidden = false;
-  showEmptyState(false);
+  if (!nativePreview) nativePreview = new window.NativePlayerRecovery(frame, url, showEmptyState);
+  nativePreview.start();
 }
 
 function loadMjpeg(url) {
@@ -479,7 +480,10 @@ function showView(targetId) {
   });
 
   if (targetId === "recordingsView") {
+    if (nativePreview) nativePreview.stop();
     refreshRecordingsList();
+  } else if (targetId === "liveView" && !document.hidden) {
+    loadFixedPreview();
   }
 }
 
@@ -490,8 +494,6 @@ navButtons.forEach((button) => {
 refreshRecordings.addEventListener("click", refreshRecordingsList);
 recordingPlayer.addEventListener("error", prepareRecordingHlsFallback);
 
-frame.addEventListener("load", () => showEmptyState(false));
-frame.addEventListener("error", () => showEmptyState(true));
 image.addEventListener("load", () => showEmptyState(false));
 image.addEventListener("error", () => showEmptyState(true));
 video.addEventListener("playing", () => showEmptyState(false));
@@ -511,6 +513,15 @@ setInterval(() => {
 }, 1000);
 
 window.addEventListener("resize", renderDetectionOverlay);
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) { if (nativePreview) nativePreview.stop(); }
+  else if (activeView === "liveView") loadFixedPreview();
+});
+window.addEventListener("pagehide", () => { if (nativePreview) nativePreview.stop(); });
+window.addEventListener("pageshow", () => {
+  if (!document.hidden && activeView === "liveView") loadFixedPreview();
+});
 
 recordingEmptyState.classList.remove("is-hidden");
 loadFixedPreview();

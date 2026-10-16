@@ -2,6 +2,11 @@
 
 This is a lightweight Raspberry Pi camera monitor with live preview, occupancy-triggered recording, a 35 GB rolling archive, and browser playback for saved clips.
 
+For recovery around the original working MediaMTX player on an existing Chromium
+kiosk, use [native player recovery](docs/NATIVE_PLAYER_RECOVERY.md). It checks
+decoded frames directly, retains the kiosk user and only restarts the browser.
+The recorder and 35 GB archive policy remain unchanged.
+
 ## Run the app on Raspberry Pi
 
 From this folder:
