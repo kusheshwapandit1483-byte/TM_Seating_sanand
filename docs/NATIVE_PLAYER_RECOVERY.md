@@ -1,5 +1,9 @@
 # Native player recovery for the earlier occupancy/35 GB variant
 
+AEGIX306 uses HLS from desktop startup, not this WebRTC service path. Follow
+[HLS desktop recovery](HLS_DESKTOP_RECOVERY.md) for that device; it needs only
+the source update and a browser refresh.
+
 Repository: TM_Seating_sanand.
 Branch: fix/occupancy-native-player-recovery.
 Base: 9c17518848538afefb12e107f3432de1b39b6222.

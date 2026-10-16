@@ -26,6 +26,7 @@ const fixedPreviewUrl = liveMode === "hls" ? hlsPreviewUrl : liveMode === "mjpeg
 const directVideoExtensions = [".mp4", ".webm", ".ogg", ".mov"];
 let hlsPlayer = null;
 let nativePreview = null;
+let hlsRecovery = null;
 let recordingHlsPlayer = null;
 let activeView = "liveView";
 let recordingFallbackClip = null;
@@ -256,7 +257,8 @@ function loadHls(url) {
           hlsPlayer.recoverMediaError();
         } else {
           showEmptyState(true);
-          queueMicrotask(() => loadHls(url));
+          if (hlsRecovery) hlsRecovery.retry("HLS fatal playback error");
+          else queueMicrotask(() => loadHls(url));
         }
       }
     });
@@ -307,7 +309,11 @@ function loadFixedPreview() {
     return;
   }
   if (isHlsUrl(fixedPreviewUrl)) {
-    loadHls(fixedPreviewUrl);
+    if (!hlsRecovery) hlsRecovery = new window.HlsLiveRecovery(video,
+      () => loadHls(fixedPreviewUrl), () => {
+        destroyHls(); video.pause(); video.removeAttribute("src"); video.load();
+      }, showEmptyState);
+    hlsRecovery.start();
     return;
   }
   if (isDirectVideoUrl(fixedPreviewUrl)) {
@@ -481,6 +487,7 @@ function showView(targetId) {
 
   if (targetId === "recordingsView") {
     if (nativePreview) nativePreview.stop();
+    if (hlsRecovery) hlsRecovery.stop();
     refreshRecordingsList();
   } else if (targetId === "liveView" && !document.hidden) {
     loadFixedPreview();
@@ -515,10 +522,16 @@ setInterval(() => {
 window.addEventListener("resize", renderDetectionOverlay);
 
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { if (nativePreview) nativePreview.stop(); }
+  if (document.hidden) {
+    if (nativePreview) nativePreview.stop();
+    if (hlsRecovery) hlsRecovery.stop();
+  }
   else if (activeView === "liveView") loadFixedPreview();
 });
-window.addEventListener("pagehide", () => { if (nativePreview) nativePreview.stop(); });
+window.addEventListener("pagehide", () => {
+  if (nativePreview) nativePreview.stop();
+  if (hlsRecovery) hlsRecovery.stop();
+});
 window.addEventListener("pageshow", () => {
   if (!document.hidden && activeView === "liveView") loadFixedPreview();
 });
