@@ -3,6 +3,7 @@
 Repository: TM_Seating_sanand.
 Branch: fix/occupancy-native-player-recovery.
 Base: 9c17518848538afefb12e107f3432de1b39b6222.
+The updater also accepts the deployed 8dc45bf release, whose source tree is identical.
 
 This ports the native MediaMTX frame observer that was verified on the separate
 raspberrypibase Pi. It keeps this variant's original player and recording code;

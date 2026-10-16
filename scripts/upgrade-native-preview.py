@@ -8,7 +8,7 @@ import subprocess
 import sys
 
 BRANCH = "fix/occupancy-native-player-recovery"
-BASELINE = "9c17518848538afefb12e107f3432de1b39b6222"
+BASELINE = "8dc45bf37125e53cd0340aee185b9b8cbb222dd5"
 REPOSITORY = "https://github.com/kusheshwapandit1483-byte/TM_Seating_sanand.git"
 
 
