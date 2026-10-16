@@ -2,6 +2,11 @@
 
 This is a lightweight Raspberry Pi camera monitor with live preview, occupancy-triggered recording, a 35 GB rolling archive, and browser playback for saved clips.
 
+For stalled live video on this earlier Pi/Radxa version, see the separate
+[automatic preview recovery update](docs/PREVIEW_RECOVERY.md). It supports
+WebRTC and MJPEG, preserves the site's mode across reboot, and retains the
+existing kiosk startup method.
+
 ## Run the app on Raspberry Pi
 
 From this folder:

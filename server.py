@@ -8,6 +8,7 @@ import socket
 import subprocess
 import threading
 import time
+from functools import lru_cache
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -822,6 +823,39 @@ def list_recordings():
 
 
 
+@lru_cache(maxsize=1)
+def preview_rtsp_timeout_args():
+    """Old FFmpeg uses stimeout; its timeout option can instead enable listen mode."""
+    try:
+        result = subprocess.run(
+            [FFMPEG_BIN, "-hide_banner", "-h", "demuxer=rtsp"],
+            capture_output=True, text=True, timeout=5, check=True,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []  # The independent decoder watchdog still bounds stalls.
+    lines = (result.stdout + result.stderr).splitlines()
+    for line in lines:
+        if line.split()[:1] == ["-stimeout"]:
+            return ["-stimeout", "8000000"]
+    for line in lines:
+        if line.split()[:1] == ["-timeout"] and "socket" in line.lower():
+            return ["-timeout", "8000000"]
+    return []
+
+
+def watch_preview_process(process, stop, progress):
+    """Release a stalled preview decoder; the separate recorder is never touched."""
+    while not stop.wait(1):
+        if process.poll() is not None:
+            return
+        if time.monotonic() - progress[0] >= 20:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            return
+
+
 def stream_live_mjpeg(handler):
     cmd = [
         FFMPEG_BIN,
@@ -830,6 +864,7 @@ def stream_live_mjpeg(handler):
         "error",
         "-rtsp_transport",
         "tcp",
+        *preview_rtsp_timeout_args(),
         "-i",
         RECORDING_SOURCE,
         "-an",
@@ -854,19 +889,25 @@ def stream_live_mjpeg(handler):
         handler.send_error(HTTPStatus.SERVICE_UNAVAILABLE, f"Could not start live preview: {exc}")
         return
 
-    handler.send_response(HTTPStatus.OK)
-    handler.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
-    handler.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
-    handler.send_header("Pragma", "no-cache")
-    handler.end_headers()
-
+    stop = threading.Event()
+    progress = [time.monotonic()]
+    watchdog = threading.Thread(target=watch_preview_process, args=(process, stop, progress), daemon=True)
+    watchdog.start()
     buffer = bytearray()
     try:
+        handler.connection.settimeout(10)
+        handler.send_response(HTTPStatus.OK)
+        handler.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        handler.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        handler.send_header("Pragma", "no-cache")
+        handler.end_headers()
         while not shutdown_event.is_set():
             chunk = process.stdout.read(8192) if process.stdout else b""
             if not chunk:
                 break
             buffer.extend(chunk)
+            if len(buffer) > 4 * 1024 * 1024:
+                break
             while True:
                 start = buffer.find(b"\xff\xd8")
                 if start < 0:
@@ -880,20 +921,27 @@ def stream_live_mjpeg(handler):
                     break
                 frame_bytes = bytes(buffer[start:end + 2])
                 del buffer[:end + 2]
+                progress[0] = time.monotonic()
                 handler.wfile.write(b"--frame\r\n")
                 handler.wfile.write(b"Content-Type: image/jpeg\r\n")
                 handler.wfile.write(f"Content-Length: {len(frame_bytes)}\r\n\r\n".encode("ascii"))
                 handler.wfile.write(frame_bytes)
                 handler.wfile.write(b"\r\n")
                 handler.wfile.flush()
-    except (BrokenPipeError, ConnectionResetError):
+    except (BrokenPipeError, ConnectionResetError, TimeoutError):
         pass
     finally:
-        process.terminate()
+        stop.set()
+        if process.poll() is None:
+            process.terminate()
         try:
             process.wait(timeout=3)
-        except Exception:
+        except subprocess.TimeoutExpired:
             process.kill()
+            process.wait(timeout=3)
+        if process.stdout:
+            process.stdout.close()
+        watchdog.join(timeout=2)
 
 def ensure_recording_hls(name):
     with storage_lock:

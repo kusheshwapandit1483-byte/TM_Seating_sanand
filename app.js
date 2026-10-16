@@ -17,14 +17,15 @@ const conditionTile = document.querySelector("#conditionTile");
 const conditionStatus = document.querySelector("#conditionStatus");
 
 const previewHost = window.location.hostname || "127.0.0.1";
-const requestedLiveMode = (new URLSearchParams(window.location.search).get("live") || "webrtc").toLowerCase();
-const liveMode = ["webrtc", "mjpeg", "hls"].includes(requestedLiveMode) ? requestedLiveMode : "webrtc";
+const requestedLiveMode = (new URLSearchParams(window.location.search).get("live") || "").toLowerCase();
+let liveMode = ["webrtc", "mjpeg", "hls"].includes(requestedLiveMode) ? requestedLiveMode : "webrtc";
 const webrtcPreviewUrl = `http://${previewHost}:8889/pramacam`;
 const hlsPreviewUrl = `http://${previewHost}:8888/pramacam/index.m3u8`;
 const mjpegPreviewUrl = "/live.mjpg";
-const fixedPreviewUrl = liveMode === "hls" ? hlsPreviewUrl : liveMode === "mjpeg" ? mjpegPreviewUrl : webrtcPreviewUrl;
 const directVideoExtensions = [".mp4", ".webm", ".ogg", ".mov"];
 let hlsPlayer = null;
+let livePreview = null;
+let mjpegPreview = null;
 let recordingHlsPlayer = null;
 let activeView = "liveView";
 let recordingFallbackClip = null;
@@ -280,10 +281,11 @@ function loadPreviewPage(url) {
   video.pause();
   video.removeAttribute("src");
   video.load();
-  video.hidden = true;
-  frame.src = url;
-  frame.hidden = false;
-  showEmptyState(false);
+  frame.hidden = true;
+  frame.removeAttribute("src");
+  video.hidden = false;
+  if (!livePreview) livePreview = new window.RecoveringPreview(video, url, showEmptyState);
+  livePreview.start();
 }
 
 function loadMjpeg(url) {
@@ -295,11 +297,13 @@ function loadMjpeg(url) {
   video.load();
   video.hidden = true;
   image.hidden = false;
-  image.src = `${url}?t=${Date.now()}`;
-  showEmptyState(false);
+  if (!mjpegPreview) mjpegPreview = new window.RecoveringMjpeg(image, url, showEmptyState);
+  mjpegPreview.start();
 }
 
 function loadFixedPreview() {
+  if (!previewReady) return;
+  const fixedPreviewUrl = liveMode === "hls" ? hlsPreviewUrl : liveMode === "mjpeg" ? mjpegPreviewUrl : webrtcPreviewUrl;
   showEmptyState(false);
   if (isMjpegUrl(fixedPreviewUrl)) {
     loadMjpeg(fixedPreviewUrl);
@@ -479,7 +483,11 @@ function showView(targetId) {
   });
 
   if (targetId === "recordingsView") {
+    if (livePreview) livePreview.stop();
+    if (mjpegPreview) mjpegPreview.stop();
     refreshRecordingsList();
+  } else if (targetId === "liveView" && !document.hidden) {
+    loadFixedPreview();
   }
 }
 
@@ -511,9 +519,38 @@ setInterval(() => {
 }, 1000);
 
 window.addEventListener("resize", renderDetectionOverlay);
+function stopLivePreview() {
+  if (livePreview) livePreview.stop();
+  if (mjpegPreview) mjpegPreview.stop();
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) stopLivePreview();
+  else if (activeView === "liveView") loadFixedPreview();
+});
+window.addEventListener("pagehide", stopLivePreview);
+window.addEventListener("pageshow", () => {
+  if (activeView === "liveView" && !document.hidden && previewReady) loadFixedPreview();
+});
+
+let previewReady = false;
+async function initialisePreview() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2000);
+  try {
+    const response = await fetch("/preview-settings.json", { cache: "no-store", signal: controller.signal });
+    if (response.ok) {
+      const settings = await response.json();
+      if (!["webrtc", "mjpeg", "hls"].includes(requestedLiveMode)
+          && ["webrtc", "mjpeg", "hls"].includes(settings.mode)) liveMode = settings.mode;
+    }
+  } catch (error) { /* Optional site settings; keep the query/default mode. */ }
+  finally { clearTimeout(timeout); }
+  previewReady = true;
+  if (activeView === "liveView" && !document.hidden) loadFixedPreview();
+}
 
 recordingEmptyState.classList.remove("is-hidden");
-loadFixedPreview();
+initialisePreview();
 refreshEsp32Status();
 refreshDetections();
 setInterval(refreshEsp32Status, 1000);
