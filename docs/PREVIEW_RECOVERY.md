@@ -30,6 +30,10 @@ Run each line only after the preceding command succeeds. The upgrade:
 - If the device uses Firefox/Openbox without that service, leaves its desktop
   startup method alone. Press Ctrl+Shift+R once in Firefox after the update.
 
+If origin points to TM_cell5 and tm-updates points to TM_Seating_sanand,
+use git fetch tm-updates fix/occupancy-preview-recovery above, then run
+python3 "$TASK_UPGRADE" --remote tm-updates. Both remotes are retained.
+
 To explicitly choose MJPEG, use python3 "$TASK_UPGRADE" --mode mjpeg on the last
 line instead. For WebRTC, use --mode webrtc. The default auto option preserves
 the known local MJPEG edit or existing saved mode; otherwise it selects WebRTC.

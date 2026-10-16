@@ -21,14 +21,14 @@ def local_mode_edit(original, current):
     return needle in original and current == original.replace(needle, 'get("live") || "mjpeg"')
 
 
-def main(mode):
+def main(mode, remote="origin"):
     if hasattr(os, "geteuid") and os.geteuid() == 0:
         raise RuntimeError("Run this upgrade as your normal administrator account, without sudo; it requests sudo only when applying services")
     root = Path(git("rev-parse", "--show-toplevel")).resolve()
     if not (root / "server.py").is_file() or not (root / "app.js").is_file():
         raise RuntimeError("Run from the installed TM_Seating_sanand checkout")
     os.chdir(root)
-    subprocess.run(["git", "fetch", "origin", BRANCH], check=True)
+    subprocess.run(["git", "fetch", remote, BRANCH], check=True)
     target = git("rev-parse", "FETCH_HEAD")
     changed = git("diff", "--name-only", "HEAD").splitlines()
     migrated = False
@@ -56,9 +56,10 @@ def main(mode):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("auto", "webrtc", "mjpeg"), default="auto")
+    parser.add_argument("--remote", default="origin", help="Existing remote containing the recovery branch")
     args = parser.parse_args()
     try:
-        main(args.mode)
+        main(args.mode, args.remote)
     except Exception as exc:
         print(f"Upgrade stopped: {exc}", file=sys.stderr)
         sys.exit(1)
